@@ -1,0 +1,69 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the in-flight run irrelevant.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: gate (tsc + eslint + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      # The same command developers run before every commit. Keeping CI and
+      # the local gate literally identical is the point — a gate that only
+      # exists in CI gets discovered after the fact.
+      - run: bun run check
+
+  build:
+    name: production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+  migrations:
+    name: migrations apply cleanly
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: polymetis
+          POSTGRES_PASSWORD: polymetis
+          POSTGRES_DB: polymetis
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U polymetis"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://polymetis:polymetis@localhost:5432/polymetis
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      # Applying against a real Postgres catches a migration that generates
+      # but does not apply — a failure mode that unit tests cannot see, and
+      # that is expensive to discover on a deploy.
+      - run: bun run db:migrate
+      # DB-dependent PASS/FAIL checks live here once M1 adds them:
+      #   for f in scripts/verify/*.ts; do bun run "$f"; done
