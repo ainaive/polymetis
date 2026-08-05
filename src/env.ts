@@ -68,10 +68,12 @@ const parsed = schema.parse(process.env);
 // secrets and need none.
 const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
 if (parsed.NODE_ENV === "production" && !isBuildPhase) {
+  // 32 is better-auth's own minimum: below it, it logs a low-entropy warning
+  // that is easy to miss in deploy logs. Fail the boot instead.
   if (
     !parsed.BETTER_AUTH_SECRET ||
     parsed.BETTER_AUTH_SECRET === DEV_FALLBACK_SECRET ||
-    parsed.BETTER_AUTH_SECRET.length < 16
+    parsed.BETTER_AUTH_SECRET.length < 32
   ) {
     throw new Error(
       "BETTER_AUTH_SECRET must be set to a strong value in production — generate one with: openssl rand -base64 32",
