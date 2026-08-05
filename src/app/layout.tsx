@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
-
-import "./globals.css";
-
-export const metadata: Metadata = {
-  title: "Polymetis",
-  description: "An AI agent task platform for software R&D.",
-};
-
+// Next requires a root layout, but every HTML-rendering route lives under
+// [locale], which owns <html> so it can set lang from the active locale.
+// This one is a pass-through.
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="antialiased">{children}</body>
-    </html>
-  );
+  return children;
 }

@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "title": "Polymetis",
+    "description": "An AI agent task platform for software R&D. Start from a template, watch the run, take the deliverable."
+  },
+  "nav": {
+    "gallery": "Gallery",
+    "templates": "Templates",
+    "signIn": "Sign in",
+    "dashboard": "Dashboard"
+  },
+  "home": {
+    "tagline": "Agent templates for software R&D",
+    "headline": "Watch an agent turn a real issue into a real spec.",
+    "subhead": "Every template on Polymetis ships with a full run replay against a public repository. Watch the whole thing, then run it on your own.",
+    "watchReplay": "Watch the replay",
+    "runOnMyRepo": "Run this on my repo",
+    "scaffoldNotice": "Scaffold in place. The gallery and replay player land in M1."
+  },
+  "locale": {
+    "switch": "Language",
+    "en": "English",
+    "zh": "简体中文"
+  }
+}
