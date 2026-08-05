@@ -17,6 +17,22 @@
     "runOnMyRepo": "在我的仓库运行",
     "scaffoldNotice": "脚手架已就绪，案例库与回放播放器将在 M1 交付。"
   },
+  "replay": {
+    "backToGallery": "案例库",
+    "demoRun": "示例运行",
+    "tokens": "tokens",
+    "play": "播放",
+    "pause": "暂停",
+    "restart": "重新播放",
+    "speed": "播放速度",
+    "elapsed": "运行进度",
+    "cost": "当前花费",
+    "steps": "步骤",
+    "filter": "显示",
+    "deliverable": "交付物",
+    "emptyDeliverable": "尚未写入内容，点击播放开始。",
+    "liveBadge": "进行中"
+  },
   "locale": {
     "switch": "语言",
     "en": "English",

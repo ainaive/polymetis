@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  advancePlayhead,
   assertContiguous,
   assignSeq,
   buildTimeline,
   eventsOfType,
   foldUsage,
   frameIndexAt,
+  MAX_FRAME_DELTA_MS,
   type StoredEvent,
 } from "./fold";
 import { safeParseRunEvent } from "./schema";
@@ -176,6 +178,42 @@ describe("frameIndexAt", () => {
 
   test("returns -1 for an empty timeline", () => {
     expect(frameIndexAt([], 100)).toBe(-1);
+  });
+});
+
+describe("advancePlayhead", () => {
+  test("advances by the frame delta scaled by speed", () => {
+    expect(advancePlayhead(0, 16, 1, 10_000).elapsedMs).toBe(16);
+    expect(advancePlayhead(0, 16, 4, 10_000).elapsedMs).toBe(64);
+  });
+
+  test("clamps a huge delta from a tab returning from the background", () => {
+    // Browsers serve no animation frames to a hidden tab, so the first frame
+    // after returning carries the whole hidden period. Without the clamp a
+    // 30-second absence would jump the playhead 30 seconds into the run.
+    const { elapsedMs, ended } = advancePlayhead(0, 30_000, 1, 60_000);
+    expect(elapsedMs).toBe(MAX_FRAME_DELTA_MS);
+    expect(ended).toBe(false);
+  });
+
+  test("the clamp still applies at high speed", () => {
+    expect(advancePlayhead(0, 30_000, 8, 600_000).elapsedMs).toBe(
+      MAX_FRAME_DELTA_MS * 8,
+    );
+  });
+
+  test("stops exactly at the end rather than overshooting", () => {
+    const { elapsedMs, ended } = advancePlayhead(9_900, 200, 8, 10_000);
+    expect(elapsedMs).toBe(10_000);
+    expect(ended).toBe(true);
+  });
+
+  test("treats a negative delta as zero rather than rewinding", () => {
+    expect(advancePlayhead(500, -100, 1, 10_000).elapsedMs).toBe(500);
+  });
+
+  test("a zero-duration run ends immediately instead of looping forever", () => {
+    expect(advancePlayhead(0, 16, 1, 0)).toEqual({ elapsedMs: 0, ended: true });
   });
 });
 

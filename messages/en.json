@@ -17,6 +17,22 @@
     "runOnMyRepo": "Run this on my repo",
     "scaffoldNotice": "Scaffold in place. The gallery and replay player land in M1."
   },
+  "replay": {
+    "backToGallery": "Gallery",
+    "demoRun": "Demo run",
+    "tokens": "tokens",
+    "play": "Play",
+    "pause": "Pause",
+    "restart": "Restart",
+    "speed": "Playback speed",
+    "elapsed": "Position in run",
+    "cost": "Cost so far",
+    "steps": "Steps",
+    "filter": "Show",
+    "deliverable": "Deliverable",
+    "emptyDeliverable": "Nothing written yet — press play.",
+    "liveBadge": "Live"
+  },
   "locale": {
     "switch": "Language",
     "en": "English",

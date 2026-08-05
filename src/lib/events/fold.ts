@@ -166,6 +166,32 @@ export function buildTimeline(events: readonly StoredEvent[]): ReplayTimeline {
   };
 }
 
+/**
+ * Longest frame delta the playhead will honour, in milliseconds. Browsers stop
+ * serving animation frames to a backgrounded tab, so the first frame after the
+ * user returns carries the entire hidden period.
+ */
+export const MAX_FRAME_DELTA_MS = 250;
+
+/**
+ * Advance the playhead by one animation frame.
+ *
+ * Pure so the timing behaviour is testable: the interesting cases (a tab
+ * returning from the background, a speed multiplier overshooting the end) are
+ * exactly the ones that are impractical to drive from a browser test.
+ */
+export function advancePlayhead(
+  current: number,
+  frameDeltaMs: number,
+  speed: number,
+  durationMs: number,
+): { elapsedMs: number; ended: boolean } {
+  const delta = Math.min(Math.max(frameDeltaMs, 0), MAX_FRAME_DELTA_MS);
+  const next = current + delta * speed;
+  if (next >= durationMs) return { elapsedMs: durationMs, ended: true };
+  return { elapsedMs: next, ended: false };
+}
+
 /** The frame index the playhead is on at `elapsedMs`. */
 export function frameIndexAt(
   frames: readonly ReplayFrame[],
