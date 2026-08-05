@@ -1,0 +1,97 @@
+import { z } from "zod";
+
+/**
+ * Every environment variable the app and the worker read, validated in one
+ * place. Optional groups (GitHub OAuth, Anthropic, object storage) degrade
+ * gracefully — the feature is disabled when its variables are absent, so a
+ * partial .env still boots. That matters here because M1 builds the gallery
+ * and replay player against seeded fixtures with no runtime credentials at all.
+ */
+const schema = z.object({
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
+
+  DATABASE_URL: z.string().optional(),
+  // Connection pool, per process. postgres-js throws on fractional or
+  // negative pool sizes — reject at parse rather than at first query.
+  DB_POOL_MAX: z.coerce.number().int().positive().default(10),
+  DB_IDLE_TIMEOUT: z.coerce.number().int().nonnegative().default(20),
+
+  // better-auth
+  BETTER_AUTH_SECRET: z.string().optional(),
+  BETTER_AUTH_URL: z.string().optional(),
+
+  // GitHub OAuth — the primary sign-in provider, and the source of the repo
+  // read scope the agent runs against. Absent means sign-in falls back to
+  // email/password only (M3).
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+
+  // Agent runtime (M2). Absent means runs cannot be executed; the gallery and
+  // replay of already-recorded runs still work, because replay reads our own
+  // event log rather than calling any model.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  AGENT_MODEL: z.string().default("claude-opus-5"),
+  AGENT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("xhigh"),
+  // Hard ceiling per run, enforced by the worker before each model call.
+  RUN_COST_CEILING_USD: z.coerce.number().positive().default(5),
+  // Wall-clock ceiling per run, enforced by the sandbox supervisor.
+  RUN_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
+
+  // Worker identity and liveness. A run whose heartbeat goes stale for longer
+  // than the reaper's threshold is requeued (see ADR-0001).
+  WORKER_ID: z.string().optional(),
+  WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  WORKER_HEARTBEAT_SECONDS: z.coerce.number().int().positive().default(15),
+});
+
+/** Exported for tests: parse a controlled input instead of process.env. */
+export const envSchema = schema;
+
+const DEV_FALLBACK_SECRET = "dev-secret-change-me";
+const DEV_FALLBACK_DB = "postgres://polymetis:polymetis@localhost:5432/polymetis";
+
+export type Env = Omit<
+  z.infer<typeof schema>,
+  "BETTER_AUTH_SECRET" | "DATABASE_URL"
+> & {
+  BETTER_AUTH_SECRET: string;
+  DATABASE_URL: string;
+};
+
+const parsed = schema.parse(process.env);
+
+// Production must not run on dev fallbacks: a guessable auth secret lets
+// anyone forge a session, and a defaulted DATABASE_URL points at nothing real.
+// Enforced at runtime, not during `next build` — build machines have no
+// secrets and need none.
+const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
+if (parsed.NODE_ENV === "production" && !isBuildPhase) {
+  if (
+    !parsed.BETTER_AUTH_SECRET ||
+    parsed.BETTER_AUTH_SECRET === DEV_FALLBACK_SECRET ||
+    parsed.BETTER_AUTH_SECRET.length < 16
+  ) {
+    throw new Error(
+      "BETTER_AUTH_SECRET must be set to a strong value in production — generate one with: openssl rand -base64 32",
+    );
+  }
+  if (!parsed.DATABASE_URL) {
+    throw new Error("DATABASE_URL must be set explicitly in production");
+  }
+}
+
+export const env: Env = {
+  ...parsed,
+  BETTER_AUTH_SECRET: parsed.BETTER_AUTH_SECRET ?? DEV_FALLBACK_SECRET,
+  DATABASE_URL: parsed.DATABASE_URL ?? DEV_FALLBACK_DB,
+};
+
+/** Whether a real agent run can be executed in this process. */
+export const canExecuteRuns = Boolean(parsed.ANTHROPIC_API_KEY);
+
+/** Whether GitHub sign-in and repo access are configured. */
+export const githubConfigured = Boolean(
+  parsed.GITHUB_CLIENT_ID && parsed.GITHUB_CLIENT_SECRET,
+);
