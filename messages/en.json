@@ -15,7 +15,10 @@
     "subhead": "Every template on Polymetis ships with a full run replay against a public repository. Watch the whole thing, then run it on your own.",
     "watchReplay": "Watch the replay",
     "runOnMyRepo": "Run this on my repo",
-    "scaffoldNotice": "Scaffold in place. The gallery and replay player land in M1."
+    "galleryHeading": "Curated runs",
+    "galleryEmpty": "No demo runs yet. Run `bun run seed` to load the golden run fixture.",
+    "runOnMyRepoSoon": "Run it yourself — soon",
+    "events": "events"
   },
   "replay": {
     "backToGallery": "Gallery",
