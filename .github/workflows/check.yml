@@ -65,5 +65,7 @@ jobs:
       # but does not apply — a failure mode that unit tests cannot see, and
       # that is expensive to discover on a deploy.
       - run: bun run db:migrate
-      # DB-dependent PASS/FAIL checks live here once M1 adds them:
-      #   for f in scripts/verify/*.ts; do bun run "$f"; done
+      # DB-dependent PASS/FAIL checks: the properties Postgres has to enforce
+      # and unit tests cannot see (uniqueness backstop, reconnect cursor,
+      # concurrent appenders).
+      - run: bun run verify

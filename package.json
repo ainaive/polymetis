@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "seed": "bun run scripts/seed.ts"
+    "seed": "bun run scripts/seed.ts",
+    "verify": "for f in scripts/verify/*.ts; do bun run \"$f\" || exit 1; done"
   },
   "dependencies": {
     "better-auth": "^1.6.26",
