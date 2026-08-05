@@ -1,3 +1,5 @@
-// Barrel for every Drizzle table. Product tables (workspaces, templates, runs,
-// run_event) land in M1.
+// Barrel for every Drizzle table.
 export * from "./auth";
+export * from "./workspace";
+export * from "./template";
+export * from "./run";
