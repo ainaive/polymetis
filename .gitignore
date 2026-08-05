@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+/dist
+
+# testing
+/coverage
+/test-results
+/playwright-report
+
+# env
+.env
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# runtime scratch: per-run sandbox workdirs created by the worker
+/.runs/
+
+# misc
+.DS_Store
+*.pem
+.vercel
