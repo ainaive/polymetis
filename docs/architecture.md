@@ -93,9 +93,9 @@ docs/adr/           decisions and their rationale
 
 | | Scope | State |
 |---|---|---|
-| M0 | Scaffold, conventions, check gate, ADRs | in progress |
-| M1 | Schema, event log, golden-run fixture, replay player, gallery | |
-| M2 | Sandbox, worker, agent driver, first template, live SSE | |
+| M0 | Scaffold, conventions, check gate, ADRs | done |
+| M1 | Schema, event log, golden-run fixture, replay player, gallery | done |
+| M2 | Sandbox, worker, agent driver, first template, live SSE | next |
 | M3 | Accounts, GitHub connect, dashboard, quota | |
 | M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | |
 | M5 | Egress allowlist, reaper, cost ceilings, retention | |
