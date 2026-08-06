@@ -61,11 +61,26 @@ export const artifactWritePayload = z.object({
   preview: z.string().optional(),
 });
 
-/** Token and cost accounting. Summed across a run to get its total. */
+/**
+ * Token and cost accounting. Summed across a run to get its total.
+ *
+ * The cache fields are optional because they were added after the first runs
+ * were recorded — ADR-0001 permits new optional fields but not repurposing
+ * existing ones, so events written before this exist without them.
+ *
+ * They matter more than they look. A validation run reporting 24k output
+ * tokens cost $2.89, which only reconciles once ~450k input tokens of cache
+ * traffic are counted: `inputTokens` alone excludes cache reads and writes
+ * entirely, so a run's token totals would understate reality by an order of
+ * magnitude while its cost stayed correct. `costUsd` is always taken from the
+ * SDK rather than derived from these counts.
+ */
 export const usagePayload = z.object({
   model: z.string().min(1),
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative().optional(),
+  cacheCreationTokens: z.number().int().nonnegative().optional(),
   costUsd: z.number().nonnegative(),
 });
 

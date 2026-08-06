@@ -54,16 +54,36 @@ export function assertContiguous(events: readonly { seq: number }[]): void {
 export type UsageTotals = {
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   costUsd: number;
 };
 
+/**
+ * Everything the model read, cached or not. This is the number to show a user
+ * asking "how big was this run" — `inputTokens` alone excludes cache traffic,
+ * which on an agentic run is most of it.
+ */
+export function totalInputTokens(totals: UsageTotals): number {
+  return totals.inputTokens + totals.cacheReadTokens + totals.cacheCreationTokens;
+}
+
 /** Sum every usage event. A partial run still folds to a real number. */
 export function foldUsage(events: readonly RunEventInput[]): UsageTotals {
-  const totals: UsageTotals = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const totals: UsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    costUsd: 0,
+  };
   for (const event of events) {
     if (event.type !== "usage") continue;
     totals.inputTokens += event.payload.inputTokens;
     totals.outputTokens += event.payload.outputTokens;
+    // Absent on events recorded before the cache fields existed.
+    totals.cacheReadTokens += event.payload.cacheReadTokens ?? 0;
+    totals.cacheCreationTokens += event.payload.cacheCreationTokens ?? 0;
     totals.costUsd += event.payload.costUsd;
   }
   // Costs arrive as small per-call deltas; re-round so the total does not
@@ -123,7 +143,13 @@ export function buildTimeline(events: readonly StoredEvent[]): ReplayTimeline {
       frames: [],
       steps: [],
       durationMs: 0,
-      totals: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      totals: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        costUsd: 0,
+      },
       toolCallCount: 0,
       status: "running",
     };
