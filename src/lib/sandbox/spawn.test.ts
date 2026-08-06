@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildDockerArgs, CONTAINER_WORKDIR, type SandboxConfig } from "./spawn";
+import {
+  buildDockerArgs,
+  CONTAINER_WORKDIR,
+  formatEnvFile,
+  type SandboxConfig,
+} from "./spawn";
 
 const config: SandboxConfig = {
   mode: "docker",
@@ -15,7 +20,7 @@ const args = () =>
   buildDockerArgs(config, {
     command: "bun",
     args: ["--version"],
-    env: { PATH: "/usr/bin", ANTHROPIC_BASE_URL: "http://polymetis-proxy:7777" },
+    envFile: "/tmp/polymetis-run-abc/env",
   });
 
 /** True when `flag` is present with `value` as the next argument. */
@@ -85,13 +90,13 @@ describe("buildDockerArgs", () => {
     expect(argv.slice(imageIndex + 1)).toEqual(["bun", "--version"]);
   });
 
-  test("forwards exactly the environment it was handed", () => {
+  test("passes the environment by file, never in argv", () => {
+    // argv is world-readable through `ps`, and the environment carries the
+    // per-run proxy token.
     const argv = args();
-    const passed = argv.filter((_, i) => argv[i - 1] === "-e");
-    expect(passed).toEqual([
-      "PATH=/usr/bin",
-      "ANTHROPIC_BASE_URL=http://polymetis-proxy:7777",
-    ]);
+    expect(hasFlag(argv, "--env-file", "/tmp/polymetis-run-abc/env")).toBe(true);
+    expect(argv).not.toContain("-e");
+    expect(argv.join(" ")).not.toContain("ANTHROPIC_BASE_URL=");
   });
 
   test("never mounts the docker socket", () => {
@@ -101,5 +106,24 @@ describe("buildDockerArgs", () => {
 
   test("never runs privileged", () => {
     expect(args()).not.toContain("--privileged");
+  });
+});
+
+describe("formatEnvFile", () => {
+  test("emits KEY=VALUE lines docker can read", () => {
+    expect(formatEnvFile({ A: "1", B: "two" })).toBe("A=1\nB=two\n");
+  });
+
+  test("does not quote or escape — values pass through verbatim", () => {
+    expect(formatEnvFile({ URL: "http://polymetis-proxy:7777" })).toBe(
+      "URL=http://polymetis-proxy:7777\n",
+    );
+  });
+
+  test("rejects a value containing a newline, which would inject a variable", () => {
+    // --env-file has no quoting, so a newline in a value silently becomes an
+    // extra environment entry in the container.
+    expect(() => formatEnvFile({ A: "one\nB=two" })).toThrow(/newline/);
+    expect(() => formatEnvFile({ A: "one\rB=two" })).toThrow(/newline/);
   });
 });

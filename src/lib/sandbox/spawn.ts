@@ -1,4 +1,7 @@
 import { spawn as spawnProcess } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 
@@ -47,7 +50,7 @@ const DEFAULTS = {
  */
 export function buildDockerArgs(
   config: SandboxConfig,
-  spawnOptions: { command: string; args: string[]; env: Record<string, string> },
+  spawnOptions: { command: string; args: string[]; envFile: string },
 ): string[] {
   const args = [
     "run",
@@ -83,12 +86,37 @@ export function buildDockerArgs(
   // The proxy runs on the host; the container reaches it by this name.
   args.push("--add-host", "polymetis-proxy:host-gateway");
 
-  for (const [name, value] of Object.entries(spawnOptions.env)) {
-    args.push("-e", `${name}=${value}`);
-  }
+  // --env-file rather than repeated -e: argv is world-readable through `ps`,
+  // and the environment carries the per-run proxy token.
+  args.push("--env-file", spawnOptions.envFile);
 
   args.push(config.image, spawnOptions.command, ...spawnOptions.args);
   return args;
+}
+
+/**
+ * Serialize the container environment to a private file.
+ *
+ * Docker's `--env-file` is `KEY=VALUE` per line with no quoting, so a value
+ * containing a newline would inject an extra variable. Nothing we pass should
+ * contain one; the guard is here because "should" is not a security property.
+ */
+export function formatEnvFile(env: Record<string, string>): string {
+  const lines: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (value.includes("\n") || value.includes("\r")) {
+      throw new Error(`environment variable ${name} contains a newline`);
+    }
+    lines.push(`${name}=${value}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function writeEnvFile(env: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), "polymetis-run-"));
+  const file = join(dir, "env");
+  writeFileSync(file, formatEnvFile(env), { mode: 0o600 });
+  return file;
 }
 
 /**
@@ -124,17 +152,28 @@ export function createSandboxSpawn(
       placeholderToken: config.placeholderToken,
     });
 
+    const envFile = writeEnvFile(env);
     const args = buildDockerArgs(config, {
       command: options.command,
       args: options.args,
-      env,
+      envFile,
     });
 
-    return spawnProcess("docker", args, {
+    const child = spawnProcess("docker", args, {
       // The host cwd is irrelevant: the container's is set by -w.
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
       signal: options.signal,
     });
+
+    // Docker reads the file during startup, so it can go as soon as the
+    // process exists. Leaving per-run secrets on disk for the lifetime of a
+    // ten-minute run is the thing this change exists to avoid.
+    const cleanup = () => rmSync(envFile, { force: true });
+    child.once("spawn", cleanup);
+    child.once("error", cleanup);
+    child.once("exit", cleanup);
+
+    return child;
   };
 }
