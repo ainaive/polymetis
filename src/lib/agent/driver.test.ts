@@ -99,4 +99,35 @@ describe("the run timeout", () => {
     const error = events.find((e) => e.type === "error");
     expect(error?.type === "error" && error.payload.message).toContain("1s limit");
   }, 20_000);
+
+  test("a failure after the log is terminal does not add a second run.end", async () => {
+    const events: RunEventInput[] = [];
+
+    // onEvents runs after each batch is durably appended, so throwing from it
+    // is a failure reaching the catch with a run.end already in the log — the
+    // shape of a live subscriber breaking, or the SDK throwing during teardown.
+    // The run's outcome is settled; the catch must not overwrite it.
+    let thrown = false;
+    const result = await runAgent(stubDb(events), {
+      runId: "run_double_end_test",
+      workdir: process.cwd(),
+      template,
+      inputs: {},
+      issue: "irrelevant",
+      timeoutSeconds: 1,
+      spawn: () => spawn("cat", [], { stdio: ["pipe", "pipe", "pipe"] }),
+      onEvents: (batch) => {
+        if (batch.some((e) => e.type === "run.end") && !thrown) {
+          thrown = true;
+          throw new Error("subscriber exploded");
+        }
+      },
+    });
+
+    expect(thrown).toBe(true);
+    // runEvents is append-only: a second terminal event is permanent, and
+    // every consumer reads the last one.
+    expect(events.filter((e) => e.type === "run.end")).toHaveLength(1);
+    expect(result.status).toBe("timed_out");
+  }, 20_000);
 });

@@ -150,16 +150,22 @@ function mapResult(
 
   // One usage event per model. A run that falls back to another model produces
   // two, and both are folded into the run's totals.
+  //
+  // The counts are defaulted rather than trusted. usagePayload requires them,
+  // and these events share a batch with the run.end below — so one absent field
+  // from the SDK would fail validation for the whole batch and leave the run
+  // with no terminal event at all. Losing a token count is a wrong number;
+  // losing the run.end makes a finished run look like it is still going.
   for (const [model, usage] of Object.entries(message.modelUsage ?? {})) {
     events.push({
       type: "usage",
       payload: {
         model,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cacheReadTokens: usage.cacheReadInputTokens,
-        cacheCreationTokens: usage.cacheCreationInputTokens,
-        costUsd: usage.costUSD,
+        inputTokens: usage.inputTokens ?? 0,
+        outputTokens: usage.outputTokens ?? 0,
+        cacheReadTokens: usage.cacheReadInputTokens ?? 0,
+        cacheCreationTokens: usage.cacheCreationInputTokens ?? 0,
+        costUsd: usage.costUSD ?? 0,
       },
     });
   }

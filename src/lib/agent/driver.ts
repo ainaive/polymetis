@@ -116,11 +116,24 @@ export async function runAgent(
   const appender = await RunEventAppender.open(db, runId);
   const collected: RunEventInput[] = [];
 
+  /** True once a terminal event is durably in the log — see the catch below. */
+  let sawRunEnd = false;
+
   const emit = async (events: RunEventInput[]) => {
     if (events.length === 0) return;
-    collected.push(...events);
     const lastSeq = await appender.append(...events);
-    onEvents?.(events, lastSeq);
+    // After the append, never before: an event that failed to persist is not
+    // part of the run, and counting it would report totals the log cannot show.
+    collected.push(...events);
+    if (events.some((event) => event.type === "run.end")) sawRunEnd = true;
+    try {
+      onEvents?.(events, lastSeq);
+    } catch {
+      // Live progress is a notification, not part of the record. A subscriber
+      // that throws must not fail a run whose events are already durable — and
+      // must not throw past the flag above, which would make the catch below
+      // append a second terminal event.
+    }
   };
 
   // run.start carries what the SDK cannot know: which template version this
@@ -142,7 +155,15 @@ export async function runAgent(
     deliverableFilename: template.deliverable.filename,
   });
 
-  let sawRunEnd = false;
+  /** The run's outcome, read back from the log rather than tracked alongside it. */
+  const settle = (): RunAgentResult => {
+    const end = collected.findLast((event) => event.type === "run.end");
+    return {
+      status: end?.type === "run.end" ? end.payload.status : "failed",
+      totals: foldUsage(collected),
+      lastSeq: appender.lastSeq,
+    };
+  };
 
   try {
     const response = query({
@@ -173,16 +194,38 @@ export async function runAgent(
     });
 
     for await (const message of response) {
-      const events = mapper.map(message);
-      if (events.some((event) => event.type === "run.end")) sawRunEnd = true;
-      await emit(events);
+      await emit(mapper.map(message));
     }
   } catch (error) {
     // The SDK throws on transport failures and on abort. Either way the run is
     // over, and the log must say so rather than ending mid-stream — a replay
     // with no terminal event is indistinguishable from one still running.
+    //
+    // Unless it already said so. The SDK can throw during teardown, after the
+    // result message was mapped and appended. Appending a second run.end would
+    // be permanent — runEvents is append-only — and would flip a succeeded run
+    // to failed for every consumer that reads the last one. The run's outcome
+    // is whatever the log already recorded; a teardown failure is a footnote to
+    // it, not a different ending.
     const message = error instanceof Error ? error.message : String(error);
     const aborted = abortController.signal.aborted;
+
+    if (sawRunEnd) {
+      try {
+        await emit([
+          {
+            type: "error",
+            payload: { message: `After the run ended: ${message}`, fatal: false },
+          },
+        ]);
+      } catch {
+        // The log is already terminal and correct. If the footnote cannot be
+        // written — the database being unreachable is the likeliest reason the
+        // stream threw at all — that is not worth failing a finished run over.
+      }
+      return settle();
+    }
+
     await emit([
       {
         type: "error",
@@ -204,7 +247,6 @@ export async function runAgent(
         },
       },
     ]);
-    sawRunEnd = true;
   } finally {
     if (timeout) clearTimeout(timeout);
   }
@@ -221,10 +263,5 @@ export async function runAgent(
     ]);
   }
 
-  const end = collected.findLast((event) => event.type === "run.end");
-  return {
-    status: end?.type === "run.end" ? end.payload.status : "failed",
-    totals: foldUsage(collected),
-    lastSeq: appender.lastSeq,
-  };
+  return settle();
 }

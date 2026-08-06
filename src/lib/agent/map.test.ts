@@ -322,3 +322,30 @@ describe("summarizeToolInput", () => {
     expect(summarizeToolInput("Bash", { command: "one\ntwo" })).toBe("one");
   });
 });
+
+describe("usage counts the SDK did not supply", () => {
+  test("a partial modelUsage entry still produces a valid usage event", () => {
+    // usagePayload requires these numbers, and the usage events share a batch
+    // with run.end — so one missing field would fail validation for the batch
+    // and leave the run with no terminal event. A wrong count is recoverable;
+    // a run that never ends is not.
+    const events = mapper().map(
+      result({
+        modelUsage: {
+          "claude-opus-5": { inputTokens: 5 },
+        },
+      } as never),
+    );
+
+    const usage = events.find((e) => e.type === "usage");
+    expect(usage?.type === "usage" && usage.payload).toMatchObject({
+      model: "claude-opus-5",
+      inputTokens: 5,
+      outputTokens: 0,
+      costUsd: 0,
+    });
+    // The batch is valid, so the terminal event survives.
+    expect(events.some((e) => e.type === "run.end")).toBe(true);
+    expect(safeParseRunEvent(usage).success).toBe(true);
+  });
+});
