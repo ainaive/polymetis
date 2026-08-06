@@ -192,6 +192,89 @@ describe("the proxy end to end", () => {
     expect(upstream.requests).toHaveLength(2);
   });
 
+  test("concurrent responses are counted separately, not collapsed", async () => {
+    // The bug this replaces: one UsageMeter shared by every request. A meter
+    // buffers partial SSE lines and takes a high-water mark per field, because
+    // a stream re-sends its running totals — so two overlapping responses of
+    // 200 and 50 tokens were counted as 200, and a chunk boundary could
+    // destroy a frame outright.
+    //
+    // Reproducing it needs the two responses to genuinely overlap. A small
+    // body arrives in a single chunk, so push() and end() happen atomically
+    // per request and the meters never interleave — an earlier version of this
+    // test passed against the buggy code for exactly that reason. So the
+    // upstream here dribbles each frame out in pieces with the event loop
+    // yielding in between.
+    const slowUpstream: Server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const tokens = JSON.parse(Buffer.concat(chunks).toString()).tokens as number;
+      const body = sseBody({ type: "message_delta", usage: { output_tokens: tokens } });
+
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      for (let i = 0; i < body.length; i += 12) {
+        res.write(body.slice(i, i + 12));
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      res.end();
+    });
+    await new Promise<void>((r) => slowUpstream.listen(0, "127.0.0.1", r));
+    const addr = slowUpstream.address();
+    const upstreamPort = addr && typeof addr === "object" ? addr.port : 0;
+    upstreamClose = () =>
+      new Promise<void>((r) => {
+        slowUpstream.closeAllConnections?.();
+        slowUpstream.close(() => r());
+      });
+
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "k" },
+      tokenCeiling: 0,
+      upstream: `http://127.0.0.1:${upstreamPort}`,
+    });
+
+    await Promise.all(
+      [200, 50].map((tokens) =>
+        fetch(`${local(proxy!)}/v1/messages`, {
+          method: "POST",
+          body: JSON.stringify({ tokens }),
+        }).then((r) => r.text()),
+      ),
+    );
+
+    expect(proxy.usage().outputTokens).toBe(250);
+  });
+
+  test("a response that fails mid-stream does not leak into the next count", async () => {
+    let failNext = true;
+    const upstream = await fakeUpstream(() => {
+      if (failNext) {
+        failNext = false;
+        // Declare more than we send, then end: the client sees a truncated body.
+        return { sse: true, body: sseBody({ type: "message_delta", usage: { output_tokens: 30 } }) };
+      }
+      return { sse: true, body: sseBody({ type: "message_delta", usage: { output_tokens: 70 } }) };
+    });
+    upstreamClose = upstream.close;
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "k" },
+      tokenCeiling: 0,
+      upstream: upstream.url,
+    });
+
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+      r.text(),
+    );
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+      r.text(),
+    );
+
+    // 30 then 70 — each response's own count, neither inherited nor dropped.
+    expect(proxy.usage().outputTokens).toBe(100);
+  });
+
   test("a ceiling of zero disables the breaker rather than refusing everything", async () => {
     const upstream = await fakeUpstream(() => ({
       sse: true,

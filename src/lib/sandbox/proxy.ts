@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 
 import {
+  addUsage,
   EMPTY_USAGE,
   type ObservedUsage,
   totalTokens,
@@ -82,8 +83,24 @@ export async function startCredentialProxy(
   config: CredentialProxyConfig,
 ): Promise<CredentialProxy> {
   const upstream = config.upstream ?? UPSTREAM;
-  const meter = new UsageMeter();
   let tripped = false;
+
+  // A UsageMeter is a scanner over ONE response: it buffers partial SSE lines
+  // and takes a high-water mark of each field, because a streamed response
+  // re-sends its running totals. Sharing one across requests interleaves their
+  // chunks into a single line buffer and collapses their high-water marks —
+  // two responses of 200 and 50 tokens are counted as 200, and a chunk
+  // boundary can destroy a frame outright. So: one meter per response, live
+  // ones tracked, finished ones folded into `committed`.
+  let committed: ObservedUsage = { ...EMPTY_USAGE };
+  const active = new Set<UsageMeter>();
+
+  /** Everything counted, including responses still streaming. */
+  function currentTotal(): ObservedUsage {
+    let total = committed;
+    for (const meter of active) total = addUsage(total, meter.total);
+    return total;
+  }
 
   const server = createServer(async (req, res) => {
     try {
@@ -129,15 +146,25 @@ export async function startCredentialProxy(
         return;
       }
 
-      const decoder = new TextDecoder();
-      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-        meter.push(decoder.decode(chunk, { stream: true }));
-        config.onUsage?.(meter.total);
-        if (overCeiling()) tripped = true;
-        res.write(chunk);
+      const meter = new UsageMeter();
+      active.add(meter);
+      try {
+        const decoder = new TextDecoder();
+        for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+          meter.push(decoder.decode(chunk, { stream: true }));
+          config.onUsage?.(currentTotal());
+          if (overCeiling()) tripped = true;
+          res.write(chunk);
+        }
+        meter.end();
+      } finally {
+        // Commit in a finally: a stream that throws mid-body would otherwise
+        // leave its partial usage neither counted nor cleared, and the next
+        // response would inherit it.
+        committed = addUsage(committed, meter.total);
+        active.delete(meter);
       }
-      meter.end();
-      config.onUsage?.(meter.total);
+      config.onUsage?.(currentTotal());
       res.end();
     } catch (error) {
       // A proxy failure must look like an upstream failure, not a hang.
@@ -155,7 +182,7 @@ export async function startCredentialProxy(
   });
 
   function overCeiling(): boolean {
-    return config.tokenCeiling > 0 && totalTokens(meter.total) >= config.tokenCeiling;
+    return config.tokenCeiling > 0 && totalTokens(currentTotal()) >= config.tokenCeiling;
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -170,7 +197,7 @@ export async function startCredentialProxy(
     // The container resolves this name via --add-host.
     baseUrl: `http://polymetis-proxy:${port}`,
     port,
-    usage: () => meter.total ?? EMPTY_USAGE,
+    usage: currentTotal,
     tripped: () => tripped,
     stop: () =>
       new Promise<void>((resolve) => {
