@@ -135,7 +135,14 @@ function EventBody({ frame }: { frame: ReplayFrame }) {
       return (
         <p className="text-muted-foreground/80 tabular-nums">
           {t("usage", {
-            tokens: frame.payload.inputTokens + frame.payload.outputTokens,
+            // Cache traffic included: on an agentic run it is most of the
+            // tokens, and a row claiming otherwise understates by orders of
+            // magnitude.
+            tokens:
+              frame.payload.inputTokens +
+              (frame.payload.cacheReadTokens ?? 0) +
+              (frame.payload.cacheCreationTokens ?? 0) +
+              frame.payload.outputTokens,
             cost: frame.payload.costUsd.toFixed(4),
           })}
         </p>

@@ -23,6 +23,8 @@ export type ReplayData = {
     costUsd: string;
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
   };
   template: {
     slug: string;
@@ -89,6 +91,8 @@ export async function getReplay(
       costUsd: row.run.costUsd,
       inputTokens: row.run.inputTokens,
       outputTokens: row.run.outputTokens,
+      cacheReadTokens: row.run.cacheReadTokens,
+      cacheCreationTokens: row.run.cacheCreationTokens,
     },
     template: {
       slug: row.template.slug,

@@ -154,6 +154,8 @@ async function seedGoldenRun(versionId: string) {
     endedAt: new Date(startedAt.getTime() + GOLDEN_RUN_DURATION_MS),
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,
+    cacheReadTokens: totals.cacheReadTokens,
+    cacheCreationTokens: totals.cacheCreationTokens,
     costUsd: totals.costUsd.toFixed(6),
   });
 

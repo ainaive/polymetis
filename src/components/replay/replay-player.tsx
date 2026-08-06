@@ -263,8 +263,13 @@ export function ReplayPlayer({
               type="range"
               min={0}
               max={durationMs}
-              step={100}
-              value={Math.round(elapsedMs)}
+              // "any" rather than a fixed step: a step of 100 caps the slider
+              // at floor(durationMs/100)*100, so on a run of 609,782ms the end
+              // is unreachable by 82ms and the final events — including every
+              // usage event — never render. Only shows up on a duration that
+              // is not a round multiple of the step.
+              step="any"
+              value={elapsedMs}
               onChange={(e) => {
                 setPlaying(false);
                 seek(Number(e.target.value));

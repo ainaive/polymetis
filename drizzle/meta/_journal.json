@@ -15,6 +15,13 @@
       "when": 1785958800972,
       "tag": "0001_workable_misty_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785979669962,
+      "tag": "0002_supreme_jetstream",
+      "breakpoints": true
     }
   ]
 }

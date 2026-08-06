@@ -103,22 +103,26 @@ export function createSandboxSpawn(
   config: SandboxConfig,
 ): NonNullable<Options["spawnClaudeCodeProcess"]> {
   return (options) => {
+    if (config.mode === "none") {
+      // No container, and therefore no proxy: the agent runs on the host and
+      // resolves credentials the way any local tool would. Applying the
+      // sandbox env filter here would strip the credential and point the agent
+      // at a proxy that is not running, so `none` would authenticate against
+      // nothing. This is the escape hatch behaving as an escape hatch, and it
+      // is why src/env.ts refuses the mode in production (ADR-0003).
+      return spawnProcess(options.command, options.args, {
+        cwd: options.cwd ?? config.workdir,
+        env: options.env as NodeJS.ProcessEnv,
+        stdio: ["pipe", "pipe", "pipe"],
+        signal: options.signal,
+      });
+    }
+
     const env = buildSandboxEnv({
       sdkEnv: options.env,
       baseUrl: config.proxyBaseUrl,
       placeholderToken: config.placeholderToken,
     });
-
-    if (config.mode === "none") {
-      return spawnProcess(options.command, options.args, {
-        cwd: options.cwd ?? config.workdir,
-        // Deliberately not ProcessEnv: this environment is built by
-        // subtraction and may legitimately lack anything, NODE_ENV included.
-        env: env as NodeJS.ProcessEnv,
-        stdio: ["pipe", "pipe", "pipe"],
-        signal: options.signal,
-      });
-    }
 
     const args = buildDockerArgs(config, {
       command: options.command,

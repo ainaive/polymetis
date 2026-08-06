@@ -67,7 +67,12 @@ export default async function ReplayPage({ params }: Props) {
             {replay.run.status}
           </Badge>
           <span className="text-muted-foreground font-mono text-xs tabular-nums">
-            {(replay.run.inputTokens + replay.run.outputTokens).toLocaleString()}{" "}
+            {(
+              replay.run.inputTokens +
+              replay.run.cacheReadTokens +
+              replay.run.cacheCreationTokens +
+              replay.run.outputTokens
+            ).toLocaleString()}{" "}
             {t("tokens")} · ${Number(replay.run.costUsd).toFixed(4)} ·{" "}
             {Math.round(durationMs / 1000)}s
           </span>

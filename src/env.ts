@@ -41,7 +41,12 @@ const schema = z.object({
   // dollars on purpose: the proxy observes tokens exactly, whereas converting
   // to dollars would need a pricing table duplicated from the SDK and free to
   // drift. 0 disables it.
-  RUN_TOKEN_CEILING: z.coerce.number().int().nonnegative().default(2_000_000),
+  // Calibrated against a measured run: issue-to-spec over a 131-file
+  // repository consumed 3.54M tokens, almost all cache traffic. A 2M ceiling
+  // would have killed it around 60% through, so the default leaves real
+  // headroom — a breaker that trips on healthy runs teaches people to raise it
+  // without looking, which is worse than not having one.
+  RUN_TOKEN_CEILING: z.coerce.number().int().nonnegative().default(8_000_000),
   // Wall-clock ceiling per run, enforced by the sandbox supervisor.
   RUN_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
 

@@ -57,8 +57,14 @@ export const runs = pgTable(
 
     // Folded from usage events when the run settles. numeric, not a float:
     // money summed across many small deltas should not drift.
+    //
+    // Cache columns are not optional decoration: a measured run recorded 1,083
+    // uncached input tokens against 3,466,299 of cache traffic, so a header
+    // built from inputTokens alone understates reality by roughly fifty times.
     inputTokens: integer().notNull().default(0),
     outputTokens: integer().notNull().default(0),
+    cacheReadTokens: integer().notNull().default(0),
+    cacheCreationTokens: integer().notNull().default(0),
     costUsd: numeric({ precision: 12, scale: 6 }).notNull().default("0"),
 
     error: text(),
