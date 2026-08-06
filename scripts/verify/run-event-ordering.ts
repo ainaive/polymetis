@@ -187,7 +187,17 @@ try {
   failures++;
   console.error("FAIL  unexpected error", error);
 } finally {
-  await teardown();
+  // A throwing teardown must not escape the finally block: it would replace
+  // the summary and exit code below with an unhandled rejection, so CI would
+  // see neither a pass nor a fail. Report it as a failure instead — it also
+  // leaves fixture rows behind, which breaks the next run on the slug
+  // uniqueness constraint.
+  try {
+    await teardown();
+  } catch (error) {
+    failures++;
+    console.error("FAIL  teardown", error);
+  }
 }
 
 console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);

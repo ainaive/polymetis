@@ -89,6 +89,7 @@ export default async function ReplayPage({ params }: Props) {
           deliverable: t("deliverable"),
           emptyDeliverable: t("emptyDeliverable"),
           liveBadge: t("liveBadge"),
+          finished: t("finished"),
         }}
       />
     </div>

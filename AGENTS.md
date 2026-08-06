@@ -22,13 +22,13 @@ Read `docs/architecture.md` first; decisions and their rationale live in
   rather than at build time. `@/auth/index` is deliberately allowed — it is
   framework-free and the worker needs it to decrypt a stored GitHub token.
 - **The run event log is append-only** (ADR-0001). Never update or delete a
-  `run_event` row, and never renumber `seq`. Replay, SSE reconnect, cost
+  `runEvents` row, and never renumber `seq`. Replay, SSE reconnect, cost
   accounting, and future fork-at-step all read it as an immutable stream.
 - **Credentials never enter the sandbox** (ADR-0002). The worker clones the
   repo on the host and bind-mounts the result. Any change that would pass a
   token, an env var holding one, or a credential-bearing git remote into the
   container needs an ADR amendment first.
-- **Template versions are immutable.** Editing a published `template_version`
+- **Template versions are immutable.** Editing a published `templateVersion`
   breaks every replay pinned to it. Publish a new version instead.
 - **Migrations**: `bun run db:generate` after schema edits; never edit an
   applied migration (Drizzle will not re-run it — the hash goes stale). Custom

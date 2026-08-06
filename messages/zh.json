@@ -34,7 +34,15 @@
     "filter": "显示",
     "deliverable": "交付物",
     "emptyDeliverable": "尚未写入内容，点击播放开始。",
-    "liveBadge": "进行中"
+    "liveBadge": "进行中",
+    "finished": "回放结束",
+    "event": {
+      "runStart": "已启动 <code>{template}</code>",
+      "runStartOn": "已在 <code>{target}</code> 上启动 <code>{template}</code>",
+      "artifactWrite": "已写入 <name>{target}</name>（{bytes} 字节）",
+      "usage": "{tokens} tokens · ${cost}",
+      "runEnd": "运行<name>{status}</name>，耗时 {duration}"
+    }
   },
   "locale": {
     "switch": "语言",

@@ -34,7 +34,15 @@
     "filter": "Show",
     "deliverable": "Deliverable",
     "emptyDeliverable": "Nothing written yet — press play.",
-    "liveBadge": "Live"
+    "liveBadge": "Live",
+    "finished": "Replay finished",
+    "event": {
+      "runStart": "Started <code>{template}</code>",
+      "runStartOn": "Started <code>{template}</code> on <code>{target}</code>",
+      "artifactWrite": "Wrote <name>{target}</name> ({bytes} bytes)",
+      "usage": "{tokens} tokens · ${cost}",
+      "runEnd": "Finished <name>{status}</name> in {duration}"
+    }
   },
   "locale": {
     "switch": "Language",

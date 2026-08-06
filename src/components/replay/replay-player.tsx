@@ -41,6 +41,7 @@ export type ReplayLabels = {
   deliverable: string;
   emptyDeliverable: string;
   liveBadge: string;
+  finished: string;
 };
 
 export function ReplayPlayer({
@@ -167,6 +168,8 @@ export function ReplayPlayer({
     [frames, cursor],
   );
 
+  const deliverable = atEnd && artifact?.content ? artifact.content : artifactSoFar;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[1fr_1fr]">
@@ -214,9 +217,13 @@ export function ReplayPlayer({
             ) : null}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            {artifactSoFar ? (
+            {/* While scrubbing, the panel assembles the per-section previews
+                recorded in artifact.write events. At the end it switches to
+                the stored artifact, which is the authoritative file — the
+                previews are snapshots and can be truncated. */}
+            {deliverable ? (
               <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                {artifactSoFar}
+                {deliverable}
               </pre>
             ) : (
               <p className="text-muted-foreground/60 text-sm">
@@ -332,8 +339,11 @@ export function ReplayPlayer({
         ) : null}
       </div>
 
+      {/* Announce completion. This must not reuse labels.elapsed — that is the
+          scrub control's accessible name, so a screen reader would hear a
+          control name where a status is expected. */}
       <span className="sr-only" aria-live="polite">
-        {atEnd ? labels.elapsed : null}
+        {atEnd ? labels.finished : null}
       </span>
     </div>
   );

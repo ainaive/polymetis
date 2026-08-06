@@ -8,9 +8,9 @@
  *
  *   DATABASE_URL=... bun run seed
  */
-import { eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 
-import { db } from "@/db";
+import { db, type DbClient } from "@/db";
 import {
   runArtifacts,
   runEvents,
@@ -37,29 +37,56 @@ import {
 
 const GOLDEN_RUN_ID = "run_goldenfixture000000000";
 
+/**
+ * Resolve the template's current version the same way the schema defines it:
+ * the highest `version` with a non-null `publishedAt`.
+ *
+ * Selecting by templateId alone returns an arbitrary row once a second version
+ * exists, and the golden run would then pin whichever one Postgres happened to
+ * return — silently breaking the reproducibility guarantee that pinning is
+ * supposed to provide.
+ */
+async function currentVersion(tx: DbClient, templateId: string) {
+  const [row] = await tx
+    .select({ id: templateVersions.id, version: templateVersions.version })
+    .from(templateVersions)
+    .where(
+      and(
+        eq(templateVersions.templateId, templateId),
+        isNotNull(templateVersions.publishedAt),
+      ),
+    )
+    .orderBy(desc(templateVersions.version))
+    .limit(1);
+  return row ?? null;
+}
+
 async function seedTemplate() {
-  const existing = await db.query.templates.findFirst({
-    where: eq(templates.slug, ISSUE_TO_SPEC_SLUG),
-  });
-
-  const templateId = existing?.id ?? newId("tpl");
-  if (!existing) {
-    await db.insert(templates).values({
-      id: templateId,
-      workspaceId: null, // first-party
-      slug: ISSUE_TO_SPEC_SLUG,
-      category: "spec",
-      visibility: "public",
+  // One transaction: these writes are dependent, and a partial commit is
+  // unrepairable here — the existence guards below would skip the missing
+  // rows on every later run, so the "safe to re-run" promise at the top of
+  // this file would be false.
+  return db.transaction(async (tx) => {
+    const existing = await tx.query.templates.findFirst({
+      where: eq(templates.slug, ISSUE_TO_SPEC_SLUG),
     });
-  }
 
-  const existingVersion = await db.query.templateVersions.findFirst({
-    where: eq(templateVersions.templateId, templateId),
-  });
+    const templateId = existing?.id ?? newId("tpl");
+    if (!existing) {
+      await tx.insert(templates).values({
+        id: templateId,
+        workspaceId: null, // first-party
+        slug: ISSUE_TO_SPEC_SLUG,
+        category: "spec",
+        visibility: "public",
+      });
+    }
 
-  const versionId = existingVersion?.id ?? newId("tplv");
-  if (!existingVersion) {
-    await db.insert(templateVersions).values({
+    const existingVersion = await currentVersion(tx, templateId);
+    if (existingVersion) return { templateId, versionId: existingVersion.id };
+
+    const versionId = newId("tplv");
+    await tx.insert(templateVersions).values({
       id: versionId,
       templateId,
       version: 1,
@@ -73,7 +100,7 @@ async function seedTemplate() {
       effort: "xhigh",
     });
 
-    await db.insert(templateI18n).values([
+    await tx.insert(templateI18n).values([
       {
         templateVersionId: versionId,
         locale: "en",
@@ -91,22 +118,25 @@ async function seedTemplate() {
         body: "读取 issue 与代码库，产出带任务拆解的方案：不熟悉该代码库的工程师也能直接照着执行。",
       },
     ]);
-  }
 
-  return { templateId, versionId };
+    return { templateId, versionId };
+  });
 }
 
 async function seedGoldenRun(versionId: string) {
   const beats = validatedGoldenRun();
-
-  // Delete and re-insert: runEvents is append-only, so re-seeding on top of an
-  // existing stream would produce two run.start events in one run.
-  await db.delete(runs).where(eq(runs.id, GOLDEN_RUN_ID));
-
   const startedAt = new Date(Date.now() - GOLDEN_RUN_DURATION_MS);
   const totals = foldUsage(beats);
 
-  await db.insert(runs).values({
+  // One transaction, for the same reason as seedTemplate: a run row without
+  // its events, or events without their artifact, is a broken replay that the
+  // next run would not repair.
+  return db.transaction(async (tx) => {
+  // Delete and re-insert: runEvents is append-only, so re-seeding on top of an
+  // existing stream would produce two run.start events in one run.
+  await tx.delete(runs).where(eq(runs.id, GOLDEN_RUN_ID));
+
+  await tx.insert(runs).values({
     id: GOLDEN_RUN_ID,
     workspaceId: null,
     userId: null,
@@ -127,26 +157,27 @@ async function seedGoldenRun(versionId: string) {
     costUsd: totals.costUsd.toFixed(6),
   });
 
-  await db.insert(runEvents).values(
-    beats.map((beat, i) => ({
+    await tx.insert(runEvents).values(
+      beats.map((beat, i) => ({
+        runId: GOLDEN_RUN_ID,
+        seq: i + 1,
+        ts: new Date(startedAt.getTime() + beat.offsetMs),
+        type: beat.type,
+        payload: beat.payload,
+      })),
+    );
+
+    await tx.insert(runArtifacts).values({
+      id: newId("art"),
       runId: GOLDEN_RUN_ID,
-      seq: i + 1,
-      ts: new Date(startedAt.getTime() + beat.offsetMs),
-      type: beat.type,
-      payload: beat.payload,
-    })),
-  );
+      path: goldenRunArtifact.path,
+      mime: goldenRunArtifact.mime,
+      bytes: new TextEncoder().encode(goldenRunArtifact.content).length,
+      content: goldenRunArtifact.content,
+    });
 
-  await db.insert(runArtifacts).values({
-    id: newId("art"),
-    runId: GOLDEN_RUN_ID,
-    path: goldenRunArtifact.path,
-    mime: goldenRunArtifact.mime,
-    bytes: new TextEncoder().encode(goldenRunArtifact.content).length,
-    content: goldenRunArtifact.content,
+    return { events: beats.length, totals };
   });
-
-  return { events: beats.length, totals };
 }
 
 const { versionId } = await seedTemplate();

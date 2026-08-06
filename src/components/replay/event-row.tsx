@@ -1,3 +1,5 @@
+"use client";
+
 import {
   AlertTriangle,
   CheckCircle2,
@@ -10,6 +12,7 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import type { ReplayFrame } from "@/lib/events/fold";
 import type { RunEventType } from "@/lib/events/schema";
@@ -61,22 +64,33 @@ export function EventRow({ frame }: { frame: ReplayFrame }) {
 }
 
 function EventBody({ frame }: { frame: ReplayFrame }) {
+  // Read from the catalog rather than hardcoding English: the event stream is
+  // the bulk of the replay page's text, and a localized frame around an
+  // English stream is the worst of both. Messages use whole-sentence ICU
+  // patterns with tags, not word fragments, so word order stays correct in
+  // each locale.
+  const t = useTranslations("replay.event");
+
   switch (frame.type) {
-    case "run.start":
+    case "run.start": {
+      const target = frame.payload.issue
+        ? `${frame.payload.issue.owner}/${frame.payload.issue.name}#${frame.payload.issue.number}`
+        : null;
       return (
         <p className="text-muted-foreground">
-          Started <Mono>{frame.payload.templateSlug}</Mono>
-          {frame.payload.issue ? (
-            <>
-              {" on "}
-              <Mono>
-                {frame.payload.issue.owner}/{frame.payload.issue.name}#
-                {frame.payload.issue.number}
-              </Mono>
-            </>
-          ) : null}
+          {target
+            ? t.rich("runStartOn", {
+                template: frame.payload.templateSlug,
+                target,
+                code: (chunks) => <Mono>{chunks}</Mono>,
+              })
+            : t.rich("runStart", {
+                template: frame.payload.templateSlug,
+                code: (chunks) => <Mono>{chunks}</Mono>,
+              })}
         </p>
       );
+    }
 
     case "step.start":
       return <p className="font-medium">{frame.payload.label}</p>;
@@ -107,21 +121,23 @@ function EventBody({ frame }: { frame: ReplayFrame }) {
     case "artifact.write":
       return (
         <p className="text-muted-foreground">
-          Wrote{" "}
-          <span className="text-foreground font-medium">
-            {frame.payload.section ?? frame.payload.path}
-          </span>{" "}
-          <span className="text-muted-foreground/70 tabular-nums">
-            ({frame.payload.bytes.toLocaleString()} bytes)
-          </span>
+          {t.rich("artifactWrite", {
+            target: frame.payload.section ?? frame.payload.path,
+            bytes: frame.payload.bytes,
+            name: (chunks) => (
+              <span className="text-foreground font-medium">{chunks}</span>
+            ),
+          })}
         </p>
       );
 
     case "usage":
       return (
         <p className="text-muted-foreground/80 tabular-nums">
-          {(frame.payload.inputTokens + frame.payload.outputTokens).toLocaleString()}{" "}
-          tokens · ${frame.payload.costUsd.toFixed(4)}
+          {t("usage", {
+            tokens: frame.payload.inputTokens + frame.payload.outputTokens,
+            cost: frame.payload.costUsd.toFixed(4),
+          })}
         </p>
       );
 
@@ -131,8 +147,13 @@ function EventBody({ frame }: { frame: ReplayFrame }) {
     case "run.end":
       return (
         <p className="text-muted-foreground">
-          Finished <span className="text-foreground font-medium">{frame.payload.status}</span>{" "}
-          in {formatElapsed(frame.payload.durationMs)}
+          {t.rich("runEnd", {
+            status: frame.payload.status,
+            duration: formatElapsed(frame.payload.durationMs),
+            name: (chunks) => (
+              <span className="text-foreground font-medium">{chunks}</span>
+            ),
+          })}
         </p>
       );
   }
