@@ -39,6 +39,17 @@ const schema = z.object({
   // Wall-clock ceiling per run, enforced by the sandbox supervisor.
   RUN_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
 
+  // Sandbox (ADR-0003). `none` runs the agent directly on the host, which is
+  // how the driver is developed before a container runtime exists; production
+  // refuses it below.
+  SANDBOX_MODE: z.enum(["docker", "none"]).default("none"),
+  SANDBOX_IMAGE: z.string().default("polymetis/sandbox:0.3.222"),
+  SANDBOX_NETWORK: z.string().default("polymetis-sandbox"),
+  SANDBOX_MEMORY: z.string().default("2g"),
+  SANDBOX_CPUS: z.string().default("2"),
+  /** Port the credential-injecting egress proxy listens on, host-side. */
+  SANDBOX_PROXY_PORT: z.coerce.number().int().positive().default(7777),
+
   // Worker identity and liveness. A run whose heartbeat goes stale for longer
   // than the reaper's threshold is requeued (see ADR-0001).
   WORKER_ID: z.string().optional(),
@@ -81,6 +92,15 @@ if (parsed.NODE_ENV === "production" && !isBuildPhase) {
   }
   if (!parsed.DATABASE_URL) {
     throw new Error("DATABASE_URL must be set explicitly in production");
+  }
+  // SANDBOX_MODE=none runs a model-driven agent over untrusted repository
+  // content directly on the host, with the worker's own filesystem and network.
+  // It exists so the driver can be developed before a container runtime is
+  // available (ADR-0003); in production it is the whole threat model deleted.
+  if (parsed.SANDBOX_MODE === "none") {
+    throw new Error(
+      "SANDBOX_MODE=none runs the agent unsandboxed on the host and must never be used in production — set SANDBOX_MODE=docker",
+    );
   }
 }
 
