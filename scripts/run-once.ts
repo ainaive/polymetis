@@ -97,6 +97,7 @@ const result = await runAgent(db, {
   },
   inputs,
   issue,
+  timeoutSeconds: env.RUN_TIMEOUT_SECONDS,
   spawn: createSandboxSpawn({
     mode: env.SANDBOX_MODE,
     image: env.SANDBOX_IMAGE,

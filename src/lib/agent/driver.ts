@@ -42,6 +42,8 @@ export type RunAgentOptions = {
   /** Extra environment for the agent process — the proxy's base URL, mainly. */
   env?: Record<string, string | undefined>;
   maxTurns?: number;
+  /** Wall-clock ceiling. Zero or below disables it. */
+  timeoutSeconds?: number;
   abortController?: AbortController;
   /** Called after each batch is durably appended, for live progress. */
   onEvents?: (events: RunEventInput[], lastSeq: number) => void;
@@ -92,9 +94,24 @@ export async function runAgent(
     spawn,
     env,
     maxTurns = DEFAULT_MAX_TURNS,
-    abortController,
+    timeoutSeconds = 0,
+    abortController = new AbortController(),
     onEvents,
   } = options;
+
+  const startedAtMs = Date.now();
+  const elapsed = () => Date.now() - startedAtMs;
+
+  // Distinguishes "the user cancelled" from "we ran out of time" — both abort
+  // the same controller, so the reason has to be recorded when it is known.
+  let timedOut = false;
+  const timeout =
+    timeoutSeconds > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          abortController.abort();
+        }, timeoutSeconds * 1_000)
+      : null;
 
   const appender = await RunEventAppender.open(db, runId);
   const collected: RunEventInput[] = [];
@@ -151,7 +168,7 @@ export async function runAgent(
         maxTurns,
         ...(spawn ? { spawnClaudeCodeProcess: spawn } : {}),
         ...(env ? { env } : {}),
-        ...(abortController ? { abortController } : {}),
+        abortController,
       },
     });
 
@@ -165,18 +182,31 @@ export async function runAgent(
     // over, and the log must say so rather than ending mid-stream — a replay
     // with no terminal event is indistinguishable from one still running.
     const message = error instanceof Error ? error.message : String(error);
-    const aborted = abortController?.signal.aborted === true;
+    const aborted = abortController.signal.aborted;
     await emit([
-      { type: "error", payload: { message, fatal: true } },
+      {
+        type: "error",
+        payload: {
+          message: timedOut
+            ? `The run exceeded its ${timeoutSeconds}s limit and was stopped.`
+            : message,
+          fatal: true,
+        },
+      },
       {
         type: "run.end",
         payload: {
-          status: aborted ? "cancelled" : "failed",
-          durationMs: 0,
+          status: timedOut ? "timed_out" : aborted ? "cancelled" : "failed",
+          // A real elapsed time, not zero: a run that dies after ten minutes
+          // rendering "Finished failed in 0:00" hides the fact most worth
+          // knowing about it.
+          durationMs: elapsed(),
         },
       },
     ]);
     sawRunEnd = true;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 
   // A stream that ends without a result message leaves the log open. Close it
@@ -187,7 +217,7 @@ export async function runAgent(
         type: "error",
         payload: { message: "The agent stream ended without a result.", fatal: true },
       },
-      { type: "run.end", payload: { status: "failed", durationMs: 0 } },
+      { type: "run.end", payload: { status: "failed", durationMs: elapsed() } },
     ]);
   }
 
