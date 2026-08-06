@@ -256,6 +256,45 @@ export async function startCredentialProxy(
   };
 }
 
+/**
+ * Run `fn` with a proxy alive, and always stop it.
+ *
+ * The lifecycle lives here rather than at each call site so the worker and the
+ * one-shot runner cannot drift — a proxy that outlives its run is a credential
+ * relay nobody is watching.
+ */
+export async function withCredentialProxy<T>(
+  config: CredentialProxyConfig,
+  fn: (proxy: CredentialProxy) => Promise<T>,
+): Promise<T> {
+  const proxy = await startCredentialProxy(config);
+  try {
+    return await fn(proxy);
+  } finally {
+    await proxy.stop();
+  }
+}
+
+/**
+ * Resolve the credential the proxy will inject.
+ *
+ * Docker mode needs a real API key. A Claude Code subscription credential is
+ * held in the OS keychain, is short-lived, and cannot be read and forwarded —
+ * so the sandboxed path genuinely requires ANTHROPIC_API_KEY, and should say so
+ * at startup rather than failing as a connection error once the agent is
+ * already running.
+ */
+export function resolveProxyCredential(
+  apiKey: string | undefined,
+): CredentialProxyConfig["credential"] {
+  if (!apiKey) {
+    throw new Error(
+      "SANDBOX_MODE=docker requires ANTHROPIC_API_KEY: the sandbox reaches the API through a proxy that must hold a real credential, and a Claude Code subscription token cannot be forwarded from the keychain.",
+    );
+  }
+  return { kind: "apiKey", value: apiKey };
+}
+
 function addressPort(server: Server): number | null {
   const address = server.address();
   return address && typeof address === "object" ? address.port : null;

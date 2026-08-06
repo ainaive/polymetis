@@ -4,7 +4,9 @@ import { createServer, type Server } from "node:http";
 import {
   buildUpstreamHeaders,
   newRunToken,
+  resolveProxyCredential,
   startCredentialProxy,
+  withCredentialProxy,
   type CredentialProxy,
 } from "./proxy";
 
@@ -95,6 +97,66 @@ describe("buildUpstreamHeaders", () => {
     expect(headers.get("host")).toBeNull();
     expect(headers.get("content-length")).toBeNull();
     expect(headers.get("connection")).toBeNull();
+  });
+});
+
+describe("withCredentialProxy", () => {
+  const config = () => ({
+    port: 0,
+    credential: { kind: "apiKey" as const, value: "k" },
+    runToken: RUN_TOKEN,
+    tokenCeiling: 0,
+    upstream: "http://127.0.0.1:1",
+  });
+
+  const isListening = async (port: number) => {
+    try {
+      await fetch(`http://127.0.0.1:${port}/`, {
+        method: "POST",
+        signal: AbortSignal.timeout(500),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  test("stops the proxy after the run completes", async () => {
+    let port = 0;
+    await withCredentialProxy(config(), async (p) => {
+      port = p.port;
+      expect(await isListening(port)).toBe(true);
+    });
+    expect(await isListening(port)).toBe(false);
+  });
+
+  test("stops the proxy even when the run throws", async () => {
+    // A proxy that outlives its run is a credential relay nobody is watching.
+    let port = 0;
+    await expect(
+      withCredentialProxy(config(), async (p) => {
+        port = p.port;
+        throw new Error("run blew up");
+      }),
+    ).rejects.toThrow("run blew up");
+    expect(await isListening(port)).toBe(false);
+  });
+});
+
+describe("resolveProxyCredential", () => {
+  test("refuses docker mode without an API key, and says why", () => {
+    // A subscription credential lives in the keychain and cannot be forwarded,
+    // so this must fail at startup rather than as a connection error once the
+    // agent is already running.
+    expect(() => resolveProxyCredential(undefined)).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => resolveProxyCredential("")).toThrow(/cannot be forwarded/);
+  });
+
+  test("uses a supplied key as an api key credential", () => {
+    expect(resolveProxyCredential("sk-ant-x")).toEqual({
+      kind: "apiKey",
+      value: "sk-ant-x",
+    });
   });
 });
 
