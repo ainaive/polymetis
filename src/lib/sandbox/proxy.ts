@@ -25,6 +25,12 @@ import {
 
 export const UPSTREAM = "https://api.anthropic.com";
 
+/**
+ * How long upstream may go silent before the request is abandoned. Generous,
+ * because extended thinking legitimately produces long gaps between frames.
+ */
+export const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
+
 /** Header names that must never be forwarded upstream from the sandbox. */
 const STRIPPED_REQUEST_HEADERS = new Set([
   "authorization",
@@ -74,6 +80,11 @@ export type CredentialProxyConfig = {
   /** Ceiling across the whole run. Zero or below disables the breaker. */
   tokenCeiling: number;
   upstream?: string;
+  /**
+   * Abort an upstream request that goes quiet for this long. Idle rather than
+   * total, because a healthy streamed response runs for minutes.
+   */
+  idleTimeoutMs?: number;
   /** Called whenever the running total changes, for progress and diagnostics. */
   onUsage?: (usage: ObservedUsage) => void;
 };
@@ -117,6 +128,7 @@ export async function startCredentialProxy(
   config: CredentialProxyConfig,
 ): Promise<CredentialProxy> {
   const upstream = config.upstream ?? UPSTREAM;
+  const idleTimeoutMs = config.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   let tripped = false;
 
   // A UsageMeter is a scanner over ONE response: it buffers partial SSE lines
@@ -171,6 +183,20 @@ export async function startCredentialProxy(
       }
 
       const body = await readBody(req);
+
+      // An idle timer rather than a deadline: a legitimate streamed response
+      // runs for minutes, so a fixed timeout would kill healthy runs. This
+      // aborts only when upstream goes quiet — covering both a stalled connect
+      // and a stream that dies mid-body, either of which would otherwise hold
+      // the sandbox's connection open with no error and no 502.
+      const upstreamAbort = new AbortController();
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const resetIdle = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => upstreamAbort.abort(), idleTimeoutMs);
+      };
+      resetIdle();
+
       const response = await fetch(new URL(req.url ?? "/", upstream), {
         method: req.method,
         headers: buildUpstreamHeaders(req.headers, config.credential),
@@ -179,7 +205,9 @@ export async function startCredentialProxy(
         // Streaming responses must not be buffered whole before the agent
         // sees them, or the run appears to hang.
         redirect: "manual",
+        signal: upstreamAbort.signal,
       });
+      resetIdle();
 
       res.writeHead(
         response.status,
@@ -191,6 +219,7 @@ export async function startCredentialProxy(
       );
 
       if (!response.body) {
+        clearTimeout(idleTimer);
         res.end();
         return;
       }
@@ -200,6 +229,7 @@ export async function startCredentialProxy(
       try {
         const decoder = new TextDecoder();
         for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+          resetIdle();
           meter.push(decoder.decode(chunk, { stream: true }));
           config.onUsage?.(currentTotal());
           if (overCeiling()) tripped = true;
@@ -207,6 +237,7 @@ export async function startCredentialProxy(
         }
         meter.end();
       } finally {
+        clearTimeout(idleTimer);
         // Commit in a finally: a stream that throws mid-body would otherwise
         // leave its partial usage neither counted nor cleared, and the next
         // response would inherit it.
@@ -216,6 +247,17 @@ export async function startCredentialProxy(
       config.onUsage?.(currentTotal());
       res.end();
     } catch (error) {
+      // Once the 200 and its headers are on the wire there is no way to turn
+      // the response into a 502: writeHead would throw ERR_HTTP_HEADERS_SENT,
+      // that error would escape this async handler as an unhandled rejection,
+      // and the sandbox's request would never complete — the run hangs instead
+      // of failing. All that is left is to close the truncated body and let
+      // the client see a short read.
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
+
       // A proxy failure must look like an upstream failure, not a hang.
       res.writeHead(502, { "content-type": "application/json" });
       res.end(

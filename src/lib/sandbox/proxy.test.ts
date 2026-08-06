@@ -374,35 +374,101 @@ describe("the proxy end to end", () => {
     expect(proxy.usage().outputTokens).toBe(250);
   });
 
-  test("a response that fails mid-stream does not leak into the next count", async () => {
-    let failNext = true;
-    const upstream = await fakeUpstream(() => {
-      if (failNext) {
-        failNext = false;
-        // Declare more than we send, then end: the client sees a truncated body.
-        return { sse: true, body: sseBody({ type: "message_delta", usage: { output_tokens: 30 } }) };
+  test("a response destroyed mid-stream still completes and does not leak", async () => {
+    // An earlier version of this test called res.end(body) on both branches,
+    // so nothing was ever truncated and it asserted nothing. The first
+    // response now writes a partial frame and destroys the socket, which is
+    // what a real mid-stream failure looks like.
+    let first = true;
+    const flaky: Server = createServer(async (req, res) => {
+      for await (const _ of req) void _;
+      const complete = sseBody({ type: "message_delta", usage: { output_tokens: 70 } });
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (first) {
+        first = false;
+        res.write(sseBody({ type: "message_delta", usage: { output_tokens: 30 } }).slice(0, 25));
+        res.socket?.destroy();
+        return;
       }
-      return { sse: true, body: sseBody({ type: "message_delta", usage: { output_tokens: 70 } }) };
+      res.end(complete);
     });
-    upstreamClose = upstream.close;
+    await new Promise<void>((r) => flaky.listen(0, "127.0.0.1", r));
+    const addr = flaky.address();
+    const flakyPort = addr && typeof addr === "object" ? addr.port : 0;
+    upstreamClose = () =>
+      new Promise<void>((r) => {
+        flaky.closeAllConnections?.();
+        flaky.close(() => r());
+      });
+
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
       runToken: RUN_TOKEN,
       tokenCeiling: 0,
-      upstream: upstream.url,
+      upstream: `http://127.0.0.1:${flakyPort}`,
     });
 
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
-      r.text(),
-    );
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
-      r.text(),
-    );
+    // The truncated response must not hang the caller. Before the headers-sent
+    // guard, the catch tried a second writeHead, threw ERR_HTTP_HEADERS_SENT
+    // out of the async handler, and the request never completed.
+    await expect(
+      fetch(`${local(proxy)}/v1/messages`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${RUN_TOKEN}` },
+        body: "{}",
+        signal: AbortSignal.timeout(4_000),
+      }).then((r) => r.text()),
+    ).resolves.toBeDefined();
 
-    // 30 then 70 — each response's own count, neither inherited nor dropped.
-    expect(proxy.usage().outputTokens).toBe(100);
-  });
+    await fetch(`${local(proxy)}/v1/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${RUN_TOKEN}` },
+      body: "{}",
+    }).then((r) => r.text());
+
+    // The second response's own 70 is counted, and nothing from the truncated
+    // first response was carried into it.
+    expect(proxy.usage().outputTokens).toBe(70);
+  }, 15_000);
+
+  test("a stalled upstream is abandoned rather than held open", async () => {
+    // Sends headers, then nothing. Without an idle timeout the proxy holds the
+    // sandbox's connection open with no error and no 502, and the run stops
+    // with no explanation.
+    const stalled: Server = createServer(async (req, res) => {
+      for await (const _ of req) void _;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      // Never write, never end.
+    });
+    await new Promise<void>((r) => stalled.listen(0, "127.0.0.1", r));
+    const addr = stalled.address();
+    const stalledPort = addr && typeof addr === "object" ? addr.port : 0;
+    upstreamClose = () =>
+      new Promise<void>((r) => {
+        stalled.closeAllConnections?.();
+        stalled.close(() => r());
+      });
+
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
+      tokenCeiling: 0,
+      upstream: `http://127.0.0.1:${stalledPort}`,
+      idleTimeoutMs: 300,
+    });
+
+    const started = Date.now();
+    await fetch(`${local(proxy)}/v1/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${RUN_TOKEN}` },
+      body: "{}",
+      signal: AbortSignal.timeout(5_000),
+    }).then((r) => r.text());
+
+    expect(Date.now() - started).toBeLessThan(4_000);
+  }, 15_000);
 
   test("a ceiling of zero disables the breaker rather than refusing everything", async () => {
     const upstream = await fakeUpstream(() => ({
