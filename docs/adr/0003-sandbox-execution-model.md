@@ -80,7 +80,14 @@ existing dev-fallback guards.
 The blast radius of a prompt injection is bounded to the run: the agent can
 produce a wrong or malicious deliverable, exhaust its token ceiling, and read
 the checkout it was given. It cannot reach either credential, the database, the
-host filesystem, other runs' workdirs, or any network destination but the proxy.
+host filesystem, or other runs' workdirs — each of those follows from something
+enforced here: the credentials never enter the container, and the only mount is
+the run's own workdir.
+
+Confining it to the proxy as its **only** network destination does not follow
+the same way. That depends on how the Docker network is configured on the host,
+which this ADR specifies but nothing in the codebase enforces or has yet
+observed — see the unverified-egress note below. State it as intent.
 
 What this costs:
 

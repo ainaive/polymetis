@@ -71,7 +71,16 @@ if (!version) {
 }
 
 const runId = newId("run");
-const inputs = { repo: repoPath, issue: "(inline)", audience: "engineer" };
+// run.start records inputs verbatim and a replay has to stand alone, so this
+// has to name the actual source. It read "(inline)" unconditionally, which made
+// a run driven by an issue file indistinguishable from one using the built-in
+// sample — and the sample is the thing you would want to rule out first when a
+// replay looks wrong.
+const inputs = {
+  repo: repoPath,
+  issue: issuePath ?? "(built-in sample)",
+  audience: "engineer",
+};
 
 await db.insert(runs).values({
   id: runId,
