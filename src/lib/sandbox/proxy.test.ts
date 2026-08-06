@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:http";
 
-import { buildUpstreamHeaders, startCredentialProxy, type CredentialProxy } from "./proxy";
+import {
+  buildUpstreamHeaders,
+  newRunToken,
+  startCredentialProxy,
+  type CredentialProxy,
+} from "./proxy";
 
 /**
  * Runs the proxy against a fake upstream on localhost. No network, no
@@ -42,6 +47,8 @@ async function fakeUpstream(
       }),
   };
 }
+
+const RUN_TOKEN = newRunToken();
 
 let proxy: CredentialProxy | undefined;
 let upstreamClose: (() => Promise<void>) | undefined;
@@ -91,6 +98,57 @@ describe("buildUpstreamHeaders", () => {
   });
 });
 
+describe("authorization", () => {
+  test("a request without the run token is refused and never reaches upstream", async () => {
+    // The proxy must listen where a container can reach it, which is not
+    // loopback. Without this check it is an open credential-injecting relay to
+    // the Anthropic API for anything sharing that network.
+    const upstream = await fakeUpstream(() => ({ body: "{}" }));
+    upstreamClose = upstream.close;
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "sk-ant-real" },
+      runToken: RUN_TOKEN,
+      tokenCeiling: 0,
+      upstream: upstream.url,
+    });
+
+    const response = await fetch(`${local(proxy)}/v1/messages`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(response.status).toBe(403);
+    expect(upstream.requests).toHaveLength(0);
+  });
+
+  test("a request with the wrong token is refused", async () => {
+    const upstream = await fakeUpstream(() => ({ body: "{}" }));
+    upstreamClose = upstream.close;
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "sk-ant-real" },
+      runToken: RUN_TOKEN,
+      tokenCeiling: 0,
+      upstream: upstream.url,
+    });
+
+    const response = await fetch(`${local(proxy)}/v1/messages`, {
+      method: "POST",
+      headers: { authorization: "Bearer plm-not-the-right-token" },
+      body: "{}",
+    });
+    expect(response.status).toBe(403);
+    expect(upstream.requests).toHaveLength(0);
+  });
+
+  test("run tokens are unguessable and distinct", () => {
+    const a = newRunToken();
+    const b = newRunToken();
+    expect(a).not.toBe(b);
+    expect(a.length).toBeGreaterThan(30);
+  });
+});
+
 describe("the proxy end to end", () => {
   test("injects the credential and forwards the body upstream", async () => {
     const upstream = await fakeUpstream(() => ({ body: JSON.stringify({ ok: true }) }));
@@ -98,13 +156,14 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "sk-ant-real" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       upstream: upstream.url,
     });
 
     const response = await fetch(`${local(proxy)}/v1/messages`, {
       method: "POST",
-      headers: { authorization: "Bearer sk-placeholder", "content-type": "application/json" },
+      headers: { authorization: `Bearer ${RUN_TOKEN}`, "content-type": "application/json" },
       body: JSON.stringify({ model: "claude-opus-5" }),
     });
 
@@ -127,11 +186,12 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       upstream: upstream.url,
     });
 
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
       r.text(),
     );
 
@@ -146,12 +206,14 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       upstream: upstream.url,
     });
 
     const received = await fetch(`${local(proxy)}/v1/messages`, {
       method: "POST",
+      headers: { authorization: `Bearer ${RUN_TOKEN}` },
       body: "{}",
     }).then((r) => r.text());
     // Metering must observe without altering: the agent has to see exactly
@@ -168,22 +230,24 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 100,
       upstream: upstream.url,
     });
 
     // First two requests total 120 tokens, crossing the ceiling.
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
       r.text(),
     );
     expect(proxy.tripped()).toBe(false);
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
       r.text(),
     );
     expect(proxy.tripped()).toBe(true);
 
     const refused = await fetch(`${local(proxy)}/v1/messages`, {
       method: "POST",
+      headers: { authorization: `Bearer ${RUN_TOKEN}` },
       body: "{}",
     });
     expect(refused.status).toBe(429);
@@ -230,6 +294,7 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       upstream: `http://127.0.0.1:${upstreamPort}`,
     });
@@ -238,6 +303,7 @@ describe("the proxy end to end", () => {
       [200, 50].map((tokens) =>
         fetch(`${local(proxy!)}/v1/messages`, {
           method: "POST",
+          headers: { authorization: `Bearer ${RUN_TOKEN}` },
           body: JSON.stringify({ tokens }),
         }).then((r) => r.text()),
       ),
@@ -260,14 +326,15 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       upstream: upstream.url,
     });
 
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
       r.text(),
     );
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
       r.text(),
     );
 
@@ -284,15 +351,16 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       upstream: upstream.url,
     });
 
-    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" }).then((r) =>
+    await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" }).then((r) =>
       r.text(),
     );
     expect(proxy.tripped()).toBe(false);
-    expect((await fetch(`${local(proxy)}/v1/messages`, { method: "POST", body: "{}" })).status).toBe(
+    expect((await fetch(`${local(proxy)}/v1/messages`, { method: "POST", headers: { authorization: `Bearer ${RUN_TOKEN}` }, body: "{}" })).status).toBe(
       200,
     );
   });
@@ -301,6 +369,7 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       // Nothing is listening here.
       upstream: "http://127.0.0.1:1",
@@ -308,6 +377,7 @@ describe("the proxy end to end", () => {
 
     const response = await fetch(`${local(proxy)}/v1/messages`, {
       method: "POST",
+      headers: { authorization: `Bearer ${RUN_TOKEN}` },
       body: "{}",
     });
     expect(response.status).toBe(502);
@@ -323,12 +393,14 @@ describe("the proxy end to end", () => {
     proxy = await startCredentialProxy({
       port: 0,
       credential: { kind: "apiKey", value: "k" },
+      runToken: RUN_TOKEN,
       tokenCeiling: 0,
       upstream: upstream.url,
     });
 
     const response = await fetch(`${local(proxy)}/v1/messages`, {
       method: "POST",
+      headers: { authorization: `Bearer ${RUN_TOKEN}` },
       body: "{}",
     });
     expect(response.status).toBe(400);

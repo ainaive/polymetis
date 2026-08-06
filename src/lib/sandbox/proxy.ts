@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 
 import {
@@ -33,10 +34,43 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   "connection",
 ]);
 
+/**
+ * Response headers we must not relay. Content encoding and length describe a
+ * body we are re-framing, and the transfer/connection headers describe a
+ * connection that ends at this process — forwarding them while Node frames its
+ * own response can produce a body the client cannot parse.
+ */
+const STRIPPED_RESPONSE_HEADERS = new Set([
+  "content-encoding",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+]);
+
+/** A per-run secret the sandbox presents. Not a credential — an authorization. */
+export function newRunToken(): string {
+  return `plm-${randomBytes(24).toString("base64url")}`;
+}
+
+function tokenMatches(presented: string | undefined, expected: string): boolean {
+  if (!presented) return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export type CredentialProxyConfig = {
   port: number;
   /** Real credential, held only in this process. */
   credential: { kind: "apiKey" | "authToken"; value: string };
+  /**
+   * The placeholder the sandbox was given. It doubles as this proxy's
+   * authorization: without it the proxy is an open credential-injecting relay
+   * to the Anthropic API for anything that can reach the port.
+   */
+  runToken: string;
   /** Ceiling across the whole run. Zero or below disables the breaker. */
   tokenCeiling: number;
   upstream?: string;
@@ -104,6 +138,21 @@ export async function startCredentialProxy(
 
   const server = createServer(async (req, res) => {
     try {
+      // Authorize before anything else. The proxy has to listen where a
+      // container can reach it, which is not loopback, so the port is exposed
+      // to whatever else shares that network.
+      const presented = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+      if (!tokenMatches(presented, config.runToken)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: { type: "permission_error", message: "Unrecognized run token." },
+          }),
+        );
+        return;
+      }
+
       if (tripped || overCeiling()) {
         tripped = true;
         // 429 rather than 402: the agent harness already knows how to stop on
@@ -136,7 +185,7 @@ export async function startCredentialProxy(
         response.status,
         Object.fromEntries(
           [...response.headers.entries()].filter(
-            ([name]) => !["content-encoding", "content-length"].includes(name),
+            ([name]) => !STRIPPED_RESPONSE_HEADERS.has(name.toLowerCase()),
           ),
         ),
       );
