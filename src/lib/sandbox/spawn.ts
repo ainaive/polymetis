@@ -33,6 +33,8 @@ export type SandboxConfig = {
   pidsLimit?: number;
   /** Docker network. Created `--internal` in production so egress is denied. */
   network?: string;
+  /** The CLI to invoke. Overridable for podman, and for testing this module. */
+  dockerBinary?: string;
 };
 
 /** Where the host workdir is mounted inside the container. */
@@ -112,11 +114,25 @@ export function formatEnvFile(env: Record<string, string>): string {
   return `${lines.join("\n")}\n`;
 }
 
-function writeEnvFile(env: Record<string, string>): string {
+/**
+ * Write the container environment to a private file, and say how to remove it.
+ *
+ * The file outlives the container's startup — docker keeps no handle on it, but
+ * removing it early races docker's own argv parsing. What protects it meanwhile
+ * is 0600 inside a 0700 mkdtemp directory; what this indirection actually
+ * bought is keeping the per-run token out of argv, which `ps` shows to every
+ * user on the host.
+ */
+function writeEnvFile(env: Record<string, string>): {
+  file: string;
+  remove: () => void;
+} {
   const dir = mkdtempSync(join(tmpdir(), "polymetis-run-"));
   const file = join(dir, "env");
   writeFileSync(file, formatEnvFile(env), { mode: 0o600 });
-  return file;
+  // Remove the directory, not just the file: one empty directory per run in
+  // tmpdir is a leak that nothing else cleans up.
+  return { file, remove: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 /**
@@ -152,27 +168,37 @@ export function createSandboxSpawn(
       placeholderToken: config.placeholderToken,
     });
 
-    const envFile = writeEnvFile(env);
+    const { file: envFile, remove: removeEnvFile } = writeEnvFile(env);
     const args = buildDockerArgs(config, {
       command: options.command,
       args: options.args,
       envFile,
     });
 
-    const child = spawnProcess("docker", args, {
-      // The host cwd is irrelevant: the container's is set by -w.
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      signal: options.signal,
-    });
+    let child;
+    try {
+      child = spawnProcess(config.dockerBinary ?? "docker", args, {
+        // The host cwd is irrelevant: the container's is set by -w.
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        signal: options.signal,
+      });
+    } catch (error) {
+      // spawn can throw synchronously — an aborted signal, or an argument the
+      // runtime rejects before forking. Nothing will ever emit, so the file has
+      // to be removed here or it stays on disk for the life of the process.
+      removeEnvFile();
+      throw error;
+    }
 
-    // Docker reads the file during startup, so it can go as soon as the
-    // process exists. Leaving per-run secrets on disk for the lifetime of a
-    // ten-minute run is the thing this change exists to avoid.
-    const cleanup = () => rmSync(envFile, { force: true });
-    child.once("spawn", cleanup);
-    child.once("error", cleanup);
-    child.once("exit", cleanup);
+    // Deleting on `spawn` is a race, not an optimization: `spawn` fires when
+    // the child process exists, which is before docker has parsed its own
+    // arguments and read --env-file. The container would start with no
+    // environment — no proxy URL, no run token — and fail to reach the API in a
+    // way that looks like a network problem rather than a missing file. Wait
+    // for the process to be gone, by which point docker has certainly read it.
+    child.once("error", removeEnvFile);
+    child.once("exit", removeEnvFile);
 
     return child;
   };

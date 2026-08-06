@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import type { ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import {
   buildDockerArgs,
   CONTAINER_WORKDIR,
+  createSandboxSpawn,
   formatEnvFile,
   type SandboxConfig,
 } from "./spawn";
@@ -125,5 +129,72 @@ describe("formatEnvFile", () => {
     // extra environment entry in the container.
     expect(() => formatEnvFile({ A: "one\nB=two" })).toThrow(/newline/);
     expect(() => formatEnvFile({ A: "one\rB=two" })).toThrow(/newline/);
+  });
+});
+
+describe("the container environment file", () => {
+  /** Reads --env-file after a delay, the way docker reads it while parsing argv. */
+  const fakeDocker = join(
+    dirname(new URL(import.meta.url).pathname),
+    "__fixtures__/slow-docker.sh",
+  );
+
+  const spawnInto = (extra: Partial<SandboxConfig> = {}) =>
+    createSandboxSpawn({ ...config, dockerBinary: fakeDocker, ...extra })({
+      command: "bun",
+      args: ["--version"],
+      env: { PATH: "/usr/bin", HOME: "/home/agent" },
+    } as never);
+
+  /**
+   * The env file's path, read back from the argv we handed the runtime. The
+   * SDK's SpawnedProcess type is narrower than what spawn() actually returns.
+   */
+  const envFileOf = (child: ReturnType<typeof spawnInto>) => {
+    const argv = (child as unknown as ChildProcess).spawnargs;
+    return argv[argv.indexOf("--env-file") + 1] ?? "";
+  };
+
+  const collect = async (child: ReturnType<typeof spawnInto>) => {
+    let out = "";
+    child.stdout?.on("data", (c: Buffer) => (out += c.toString()));
+    const code = await new Promise<number | null>((r) => child.once("exit", r));
+    return { out, code };
+  };
+
+  test("survives long enough for the container runtime to read it", async () => {
+    // The regression: cleanup was registered on 'spawn', which fires when the
+    // child exists — before docker has parsed argv and opened --env-file. The
+    // container would come up with no proxy URL and no run token, and fail as
+    // what looks like a network problem rather than a missing file.
+    const { out } = await collect(spawnInto());
+
+    expect(out).not.toContain("MISSING_ENV_FILE");
+    expect(out).toContain("ANTHROPIC_BASE_URL=http://polymetis-proxy:7777");
+    expect(out).toContain("ANTHROPIC_AUTH_TOKEN=placeholder");
+  });
+
+  test("is removed once the container exits, along with its directory", async () => {
+    const child = spawnInto();
+    const envFile = envFileOf(child);
+    expect(existsSync(envFile)).toBe(true);
+
+    await collect(child);
+    // 'exit' can land before the handler that removes it; yield once.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(existsSync(envFile)).toBe(false);
+    // The mkdtemp directory goes too — one per run would otherwise accumulate.
+    expect(existsSync(dirname(envFile))).toBe(false);
+  });
+
+  test("is removed when the runtime cannot be started at all", async () => {
+    const child = spawnInto({ dockerBinary: "/nonexistent/docker" });
+    const envFile = envFileOf(child);
+
+    await new Promise((r) => child.once("error", r));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(existsSync(envFile)).toBe(false);
   });
 });
