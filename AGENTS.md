@@ -24,10 +24,17 @@ Read `docs/architecture.md` first; decisions and their rationale live in
 - **The run event log is append-only** (ADR-0001). Never update or delete a
   `runEvents` row, and never renumber `seq`. Replay, SSE reconnect, cost
   accounting, and future fork-at-step all read it as an immutable stream.
-- **Credentials never enter the sandbox** (ADR-0002). The worker clones the
-  repo on the host and bind-mounts the result. Any change that would pass a
-  token, an env var holding one, or a credential-bearing git remote into the
-  container needs an ADR amendment first.
+- **Credentials never enter the sandbox** (ADR-0002, ADR-0003). The worker
+  clones the repo on the host and bind-mounts the result; the Anthropic
+  credential is injected by the egress proxy, so the container holds only a
+  placeholder. `src/lib/sandbox/env.ts` is that boundary in code — it builds
+  the container environment by subtraction and its tests are the guarantee.
+  Any change that would pass a token, an env var holding one, or a
+  credential-bearing git remote into the container needs an ADR amendment
+  first.
+- **`SANDBOX_MODE=none` is a development-only foot-gun** (ADR-0003). It runs a
+  model-driven agent over untrusted repository content directly on the host.
+  `src/env.ts` hard-fails on it in production; never weaken that guard.
 - **Template versions are immutable.** Editing a published `templateVersion`
   breaks every replay pinned to it. Publish a new version instead.
 - **Migrations**: `bun run db:generate` after schema edits; never edit an

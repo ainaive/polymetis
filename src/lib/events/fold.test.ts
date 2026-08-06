@@ -9,6 +9,7 @@ import {
   foldUsage,
   frameIndexAt,
   MAX_FRAME_DELTA_MS,
+  totalInputTokens,
   type StoredEvent,
 } from "./fold";
 import { safeParseRunEvent } from "./schema";
@@ -76,7 +77,13 @@ describe("foldUsage", () => {
       usage(0.25, 1, 0),
       usage(0.75, 2, 10),
     ]);
-    expect(totals).toEqual({ inputTokens: 20, outputTokens: 10, costUsd: 1 });
+    expect(totals).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      costUsd: 1,
+    });
   });
 
   test("does not accumulate float drift across many small deltas", () => {
@@ -88,6 +95,45 @@ describe("foldUsage", () => {
 
   test("a run with no usage events folds to zero, not NaN", () => {
     expect(foldUsage([]).costUsd).toBe(0);
+  });
+
+  test("sums cache traffic, which dominates an agentic run", () => {
+    const totals = foldUsage([
+      {
+        type: "usage",
+        payload: {
+          model: "claude-opus-5",
+          inputTokens: 28,
+          outputTokens: 24_182,
+          cacheReadTokens: 380_000,
+          cacheCreationTokens: 70_000,
+          costUsd: 2.8862,
+        },
+      },
+    ]);
+    // The shape that motivated these fields: reporting inputTokens alone would
+    // claim this run read 28 tokens when it actually read 450,028.
+    expect(totals.inputTokens).toBe(28);
+    expect(totalInputTokens(totals)).toBe(450_028);
+  });
+
+  test("events recorded before the cache fields existed still fold", () => {
+    // ADR-0001 allows adding optional fields but not repurposing existing
+    // ones, so older events legitimately lack these and must not produce NaN.
+    const totals = foldUsage([
+      {
+        type: "usage",
+        payload: {
+          model: "claude-opus-5",
+          inputTokens: 100,
+          outputTokens: 50,
+          costUsd: 0.5,
+        },
+      },
+    ]);
+    expect(totals.cacheReadTokens).toBe(0);
+    expect(totals.cacheCreationTokens).toBe(0);
+    expect(totalInputTokens(totals)).toBe(100);
   });
 });
 

@@ -1,6 +1,6 @@
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
-import { getTranslations, setRequestLocale } from "next-intl/server";
+import { getFormatter, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { ReplayPlayer } from "@/components/replay/replay-player";
@@ -29,6 +29,11 @@ export default async function ReplayPage({ params }: Props) {
   if (!replay) notFound();
 
   const t = await getTranslations("replay");
+  // Formatted against the request locale, not the server's. toLocaleString()
+  // with no argument reads the host's default, so a zh reader would get whatever
+  // grouping the machine happens to run — and the same page would render
+  // differently in dev and in production.
+  const format = await getFormatter();
   const durationMs =
     replay.run.startedAt && replay.run.endedAt
       ? replay.run.endedAt.getTime() - replay.run.startedAt.getTime()
@@ -67,7 +72,12 @@ export default async function ReplayPage({ params }: Props) {
             {replay.run.status}
           </Badge>
           <span className="text-muted-foreground font-mono text-xs tabular-nums">
-            {(replay.run.inputTokens + replay.run.outputTokens).toLocaleString()}{" "}
+            {format.number(
+              replay.run.inputTokens +
+                replay.run.cacheReadTokens +
+                replay.run.cacheCreationTokens +
+                replay.run.outputTokens,
+            )}{" "}
             {t("tokens")} · ${Number(replay.run.costUsd).toFixed(4)} ·{" "}
             {Math.round(durationMs / 1000)}s
           </span>

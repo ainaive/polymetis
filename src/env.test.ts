@@ -38,4 +38,14 @@ describe("envSchema", () => {
   test("rejects an effort level the API does not accept", () => {
     expect(() => envSchema.parse({ AGENT_EFFORT: "extreme" })).toThrow();
   });
+
+  test("defaults the sandbox to none so the driver is developable without Docker", () => {
+    // Safe only because the production guard in env.ts refuses this mode;
+    // that guard is what makes the default acceptable.
+    expect(envSchema.parse({}).SANDBOX_MODE).toBe("none");
+  });
+
+  test("rejects a sandbox mode that is neither docker nor none", () => {
+    expect(() => envSchema.parse({ SANDBOX_MODE: "vm" })).toThrow();
+  });
 });
