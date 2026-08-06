@@ -15,7 +15,34 @@
     "subhead": "Every template on Polymetis ships with a full run replay against a public repository. Watch the whole thing, then run it on your own.",
     "watchReplay": "Watch the replay",
     "runOnMyRepo": "Run this on my repo",
-    "scaffoldNotice": "Scaffold in place. The gallery and replay player land in M1."
+    "galleryHeading": "Curated runs",
+    "galleryEmpty": "No demo runs yet. Run `bun run seed` to load the golden run fixture.",
+    "runOnMyRepoSoon": "Run it yourself — soon",
+    "events": "events"
+  },
+  "replay": {
+    "backToGallery": "Gallery",
+    "demoRun": "Demo run",
+    "tokens": "tokens",
+    "play": "Play",
+    "pause": "Pause",
+    "restart": "Restart",
+    "speed": "Playback speed",
+    "elapsed": "Position in run",
+    "cost": "Cost so far",
+    "steps": "Steps",
+    "filter": "Show",
+    "deliverable": "Deliverable",
+    "emptyDeliverable": "Nothing written yet — press play.",
+    "liveBadge": "Live",
+    "finished": "Replay finished",
+    "event": {
+      "runStart": "Started <code>{template}</code>",
+      "runStartOn": "Started <code>{template}</code> on <code>{target}</code>",
+      "artifactWrite": "Wrote <name>{target}</name> ({bytes} bytes)",
+      "usage": "{tokens} tokens · ${cost}",
+      "runEnd": "Finished <name>{status}</name> in {duration}"
+    }
   },
   "locale": {
     "switch": "Language",

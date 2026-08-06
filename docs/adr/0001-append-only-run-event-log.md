@@ -21,8 +21,8 @@ transcript blob, updated as the agent works.
 
 ## Decision
 
-Runs are recorded as an **append-only event stream**: `run_event`, keyed by
-`(run_id, seq)` with a uniqueness constraint, where `seq` is monotonic and
+Runs are recorded as an **append-only event stream**: `runEvents`, keyed by
+`(runId, seq)` with a uniqueness constraint, where `seq` is monotonic and
 gap-free within a run. Rows are never updated, never deleted, and `seq` is
 never renumbered. Event payloads are typed and validated by Zod schemas over a
 closed set of event types.
@@ -44,7 +44,7 @@ All six capabilities become reads of one table rather than six mechanisms:
   number attached.
 - **Fork** is the prefix `seq <= N`.
 - **Evals** compare deliverables across runs that pin the same
-  `template_version_id`.
+  `templateVersionId`.
 
 Because replay reads our own Postgres and never calls a model, **replaying a
 run is free**. That is what makes it safe to leave the gallery open to

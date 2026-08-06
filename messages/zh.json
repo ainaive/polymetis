@@ -15,7 +15,34 @@
     "subhead": "Polymetis 上的每个模板都附带一次针对公开仓库的完整运行回放。先看完整过程，再用它跑你自己的仓库。",
     "watchReplay": "观看回放",
     "runOnMyRepo": "在我的仓库运行",
-    "scaffoldNotice": "脚手架已就绪，案例库与回放播放器将在 M1 交付。"
+    "galleryHeading": "精选运行",
+    "galleryEmpty": "还没有示例运行。执行 `bun run seed` 载入 golden run 固定数据。",
+    "runOnMyRepoSoon": "自己跑一次 — 即将开放",
+    "events": "个事件"
+  },
+  "replay": {
+    "backToGallery": "案例库",
+    "demoRun": "示例运行",
+    "tokens": "tokens",
+    "play": "播放",
+    "pause": "暂停",
+    "restart": "重新播放",
+    "speed": "播放速度",
+    "elapsed": "运行进度",
+    "cost": "当前花费",
+    "steps": "步骤",
+    "filter": "显示",
+    "deliverable": "交付物",
+    "emptyDeliverable": "尚未写入内容，点击播放开始。",
+    "liveBadge": "进行中",
+    "finished": "回放结束",
+    "event": {
+      "runStart": "已启动 <code>{template}</code>",
+      "runStartOn": "已在 <code>{target}</code> 上启动 <code>{template}</code>",
+      "artifactWrite": "已写入 <name>{target}</name>（{bytes} 字节）",
+      "usage": "{tokens} tokens · ${cost}",
+      "runEnd": "运行<name>{status}</name>，耗时 {duration}"
+    }
   },
   "locale": {
     "switch": "语言",

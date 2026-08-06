@@ -13,10 +13,10 @@ a chat window with a prompt library.
 ## Shape
 
 ```
-Browser ──SSE──> Next.js API ──reads──> Postgres (run_event, append-only)
+Browser ──SSE──> Next.js API ──reads──> Postgres (runEvents, append-only)
                                             ▲
-                                            │ append (run_id, seq)
-   Postgres run_queue <──claim── Bun worker ┘
+                                            │ append (runId, seq)
+   Postgres runQueue  <──claim── Bun worker ┘
                                     │
                                     ├─ clone repo (token held HERE, never below)
                                     └─ sandboxed container, default-deny egress
@@ -34,7 +34,7 @@ Two processes share one codebase and one database:
 
 ## The event log is the spine
 
-`run_event` is an append-only stream keyed by `(run_id, seq)`. Everything the
+`runEvents` is an append-only stream keyed by `(runId, seq)`. Everything the
 product does with a run reads that one table:
 
 | Capability | How it falls out of the log |
@@ -54,15 +54,15 @@ See ADR-0001 for why this is append-only rather than mutable run state.
 
 ## A template is a contract, not a prompt
 
-A `template_version` is immutable and has five parts:
+A `templateVersion` is immutable and has five parts:
 
-1. **`input_schema`** — typed parameters (repository, issue URL, audience)
-2. **`tool_policy`** — which tools the agent may use, and under what permission
+1. **`inputSchema`** — typed parameters (repository, issue URL, audience)
+2. **`toolPolicy`** — which tools the agent may use, and under what permission
 3. **`directives`** — the agent instructions
 4. **`deliverable`** — the artifact contract: filename, format, required sections
 5. **`rubric`** — how to tell whether the deliverable is any good
 
-A run pins a `template_version_id`, so a replay from months ago still describes
+A run pins a `templateVersionId`, so a replay from months ago still describes
 exactly what produced it. Saved prompts have no moat; this contract is what
 makes runs comparable and replays legible.
 
@@ -93,9 +93,9 @@ docs/adr/           decisions and their rationale
 
 | | Scope | State |
 |---|---|---|
-| M0 | Scaffold, conventions, check gate, ADRs | in progress |
-| M1 | Schema, event log, golden-run fixture, replay player, gallery | |
-| M2 | Sandbox, worker, agent driver, first template, live SSE | |
+| M0 | Scaffold, conventions, check gate, ADRs | done |
+| M1 | Schema, event log, golden-run fixture, replay player, gallery | done |
+| M2 | Sandbox, worker, agent driver, first template, live SSE | next |
 | M3 | Accounts, GitHub connect, dashboard, quota | |
 | M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | |
 | M5 | Egress allowlist, reaper, cost ceilings, retention | |

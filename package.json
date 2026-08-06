@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "seed": "bun run scripts/seed.ts"
+    "seed": "bun run scripts/seed.ts",
+    "verify": "for f in scripts/verify/*.ts; do bun run \"$f\" || exit 1; done"
   },
   "dependencies": {
     "better-auth": "^1.6.26",
@@ -26,6 +27,7 @@
     "next-intl": "^4.13.5",
     "next-themes": "^0.4.6",
     "postgres": "^3.4.9",
+    "radix-ui": "^1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
