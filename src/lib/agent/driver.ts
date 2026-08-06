@@ -1,0 +1,200 @@
+import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
+
+import type { DbClient } from "@/db";
+import { foldUsage, type UsageTotals } from "@/lib/events/fold";
+import type { PayloadFor, RunEventInput } from "@/lib/events/schema";
+import { RunEventAppender } from "@/lib/events/store";
+import type { Deliverable, ToolPolicy } from "@/lib/templates/contract";
+
+import { createEventMapper } from "./map";
+
+/**
+ * Runs one template against one prepared workdir and records what happened.
+ *
+ * Everything the agent does happens in whatever `spawn` puts it in — normally a
+ * container (ADR-0003). This module owns the translation from "a template
+ * version plus inputs" to an SDK invocation, and nothing else: the queue,
+ * the sandbox, and the credential proxy are all somebody else's problem.
+ */
+
+export type RunnableTemplate = {
+  slug: string;
+  version: number;
+  directives: string;
+  deliverable: Deliverable;
+  toolPolicy: ToolPolicy;
+  model: string;
+  effort: string;
+};
+
+export type RunAgentOptions = {
+  runId: string;
+  /** Prepared workdir: the repo is already checked out here (ADR-0002). */
+  workdir: string;
+  template: RunnableTemplate;
+  inputs: Record<string, string>;
+  /** The issue text, already fetched host-side. */
+  issue: string;
+  repo?: { owner: string; name: string };
+  issueRef?: { owner: string; name: string; number: number; title: string };
+  /** Supplied by the sandbox; omitted means the SDK spawns locally. */
+  spawn?: Options["spawnClaudeCodeProcess"];
+  /** Extra environment for the agent process — the proxy's base URL, mainly. */
+  env?: Record<string, string | undefined>;
+  maxTurns?: number;
+  abortController?: AbortController;
+  /** Called after each batch is durably appended, for live progress. */
+  onEvents?: (events: RunEventInput[], lastSeq: number) => void;
+};
+
+export type RunAgentResult = {
+  status: PayloadFor<"run.end">["status"];
+  totals: UsageTotals;
+  lastSeq: number;
+};
+
+const DEFAULT_MAX_TURNS = 120;
+
+/**
+ * The prompt is the template's directives plus the concrete task. Kept separate
+ * so it can be asserted on without running an agent — the directives are part
+ * of the versioned contract, and a change to how they are framed is a change
+ * to what the template means.
+ */
+export function buildPrompt(options: {
+  directives: string;
+  deliverable: Deliverable;
+  issue: string;
+}): string {
+  return `${options.directives}
+
+---
+
+The repository is at the current working directory. Here is the issue:
+
+${options.issue}
+
+Write your deliverable to ${options.deliverable.filename} in the repository root.`;
+}
+
+export async function runAgent(
+  db: DbClient,
+  options: RunAgentOptions,
+): Promise<RunAgentResult> {
+  const {
+    runId,
+    workdir,
+    template,
+    inputs,
+    issue,
+    repo,
+    issueRef,
+    spawn,
+    env,
+    maxTurns = DEFAULT_MAX_TURNS,
+    abortController,
+    onEvents,
+  } = options;
+
+  const appender = await RunEventAppender.open(db, runId);
+  const collected: RunEventInput[] = [];
+
+  const emit = async (events: RunEventInput[]) => {
+    if (events.length === 0) return;
+    collected.push(...events);
+    const lastSeq = await appender.append(...events);
+    onEvents?.(events, lastSeq);
+  };
+
+  // run.start carries what the SDK cannot know: which template version this
+  // was, and what it was pointed at. A replay has to stand alone.
+  await emit([
+    {
+      type: "run.start",
+      payload: {
+        templateSlug: template.slug,
+        templateVersion: template.version,
+        inputs,
+        ...(repo ? { repo } : {}),
+        ...(issueRef ? { issue: issueRef } : {}),
+      },
+    },
+  ]);
+
+  const mapper = createEventMapper({
+    deliverableFilename: template.deliverable.filename,
+  });
+
+  let sawRunEnd = false;
+
+  try {
+    const response = query({
+      prompt: buildPrompt({
+        directives: template.directives,
+        deliverable: template.deliverable,
+        issue,
+      }),
+      options: {
+        cwd: workdir,
+        model: template.model,
+        effort: template.effort as Options["effort"],
+        // The template's tool policy is enforced, not advisory.
+        allowedTools: [...template.toolPolicy.allow],
+        disallowedTools: [...template.toolPolicy.deny],
+        // Never inherit developer or project config: a run must depend only on
+        // the template contract, and the sandbox has no such config anyway.
+        settingSources: [],
+        permissionMode: "bypassPermissions",
+        // Token-level deltas would flood an append-only log for no replay
+        // benefit; events stay at message granularity.
+        includePartialMessages: false,
+        maxTurns,
+        ...(spawn ? { spawnClaudeCodeProcess: spawn } : {}),
+        ...(env ? { env } : {}),
+        ...(abortController ? { abortController } : {}),
+      },
+    });
+
+    for await (const message of response) {
+      const events = mapper.map(message);
+      if (events.some((event) => event.type === "run.end")) sawRunEnd = true;
+      await emit(events);
+    }
+  } catch (error) {
+    // The SDK throws on transport failures and on abort. Either way the run is
+    // over, and the log must say so rather than ending mid-stream — a replay
+    // with no terminal event is indistinguishable from one still running.
+    const message = error instanceof Error ? error.message : String(error);
+    const aborted = abortController?.signal.aborted === true;
+    await emit([
+      { type: "error", payload: { message, fatal: true } },
+      {
+        type: "run.end",
+        payload: {
+          status: aborted ? "cancelled" : "failed",
+          durationMs: 0,
+        },
+      },
+    ]);
+    sawRunEnd = true;
+  }
+
+  // A stream that ends without a result message leaves the log open. Close it
+  // rather than letting the reaper decide later.
+  if (!sawRunEnd) {
+    await emit([
+      {
+        type: "error",
+        payload: { message: "The agent stream ended without a result.", fatal: true },
+      },
+      { type: "run.end", payload: { status: "failed", durationMs: 0 } },
+    ]);
+  }
+
+  const end = collected.findLast((event) => event.type === "run.end");
+  return {
+    status: end?.type === "run.end" ? end.payload.status : "failed",
+    totals: foldUsage(collected),
+    lastSeq: appender.lastSeq,
+  };
+}
