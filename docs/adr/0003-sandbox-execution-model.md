@@ -87,7 +87,8 @@ the run's own workdir.
 Confining it to the proxy as its **only** network destination does not follow
 the same way. That depends on how the Docker network is configured on the host,
 which this ADR specifies but nothing in the codebase enforces or has yet
-observed — see the unverified-egress note below. State it as intent.
+observed. It is therefore an intended property of this design, not a guarantee
+it currently provides — see the unverified-egress note below.
 
 What this costs:
 
