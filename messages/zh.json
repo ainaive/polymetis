@@ -8,7 +8,8 @@
     "templates": "模板",
     "signIn": "登录",
     "dashboard": "工作台",
-    "signOut": "退出登录"
+    "signOut": "退出登录",
+    "settings": "设置"
   },
   "auth": {
     "signInTitle": "登录",
@@ -62,6 +63,20 @@
       "repo": "owner/name 或 GitHub 链接。目前仅支持公开仓库。",
       "issue": "GitHub 议题链接，其正文会在运行开始前读取。"
     }
+  },
+  "githubSettings": {
+    "title": "GitHub",
+    "subtitle": "连接仓库，运行才能读取它。",
+    "notConfigured": "此服务器尚未配置 GitHub App。",
+    "notConnected": "尚未连接 GitHub 账户。",
+    "connect": "连接 GitHub",
+    "manage": "在 GitHub 上管理",
+    "disconnect": "断开连接",
+    "connectedTo": "已连接到 {account}。",
+    "connectedHint": "运行可以读取你所选择的仓库。",
+    "errorMissing": "GitHub 未返回安装信息，请从 App 页面重试。",
+    "errorFailed": "无法确认该安装，请重新连接。",
+    "scopeNote": "Polymetis 仅申请仓库内容的读取权限，绝不会写入你的仓库；也不会存储仓库令牌——仅在运行需要时申请，并会在一小时内过期。"
   },
   "home": {
     "tagline": "面向软件研发的 Agent 模板",

@@ -28,6 +28,7 @@ export const ID_PREFIXES = [
   "tplv", // template version
   "run", // run
   "art", // run artifact
+  "ghi", // github installation
 ] as const;
 
 export type IdPrefix = (typeof ID_PREFIXES)[number];

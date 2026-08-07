@@ -27,6 +27,9 @@ export async function SiteHeader() {
               <Button asChild variant="ghost" size="sm">
                 <Link href="/dashboard">{t("dashboard")}</Link>
               </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/settings/github">{t("settings")}</Link>
+              </Button>
               <SignOutButton label={t("signOut")} />
             </>
           ) : (

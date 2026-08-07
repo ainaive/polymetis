@@ -8,7 +8,8 @@
     "templates": "Templates",
     "signIn": "Sign in",
     "dashboard": "Dashboard",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "settings": "Settings"
   },
   "auth": {
     "signInTitle": "Sign in",
@@ -62,6 +63,20 @@
       "repo": "owner/name, or a GitHub URL. Public repositories only for now.",
       "issue": "A GitHub issue URL. Its text is read before the run starts."
     }
+  },
+  "githubSettings": {
+    "title": "GitHub",
+    "subtitle": "Connect a repository so runs can read it.",
+    "notConfigured": "The GitHub App is not configured on this server.",
+    "notConnected": "No GitHub account connected.",
+    "connect": "Connect GitHub",
+    "manage": "Manage on GitHub",
+    "disconnect": "Disconnect",
+    "connectedTo": "Connected to {account}.",
+    "connectedHint": "Runs can read the repositories you selected.",
+    "errorMissing": "GitHub did not send an installation. Try again from the App page.",
+    "errorFailed": "That installation could not be confirmed. Try connecting again.",
+    "scopeNote": "Polymetis asks for read access to repository contents only. It never writes to your repositories, and no repository token is stored — one is requested when a run needs it and expires within the hour."
   },
   "home": {
     "tagline": "Agent templates for software R&D",
