@@ -24,7 +24,21 @@ transcript blob, updated as the agent works.
 Runs are recorded as an **append-only event stream**: `runEvents`, keyed by
 `(runId, seq)` with a uniqueness constraint, where `seq` is monotonic and
 gap-free within a run. Rows are never updated, never deleted, and `seq` is
-never renumbered. Event payloads are typed and validated by Zod schemas over a
+never renumbered.
+
+> **Amended in M5 — retention.** One operation deletes: retention removes a
+> private run's log once it is older than `RETENTION_DAYS`. It removes the log
+> **whole**, in a single transaction, together with that run's artifacts, and
+> marks the run `purgedAt`.
+>
+> The invariant replay, cost accounting and the SSE cursor actually depend on
+> is *a log is complete or absent* — never partially deleted, never renumbered,
+> never reordered. A whole-log deletion upholds that; it is a partial one that
+> would break every consumer at once, which is why the deletion is transactional
+> and why nothing anywhere deletes an individual event.
+>
+> Demo, public and unlisted runs are never purged: the gallery and any link
+> someone has shared must keep working. See `src/lib/runs/retention.ts`. Event payloads are typed and validated by Zod schemas over a
 closed set of event types.
 
 `run` keeps only derived, terminal facts (status, totals, timestamps).

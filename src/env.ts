@@ -83,6 +83,14 @@ const schema = z.object({
   // what stops a workspace starting twenty at once and blowing past the month.
   WORKSPACE_MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(3),
 
+  /**
+   * How long a private run keeps its event log and artifacts.
+   *
+   * Demo, public and unlisted runs are never purged — the gallery and any link
+   * someone has shared must keep working. 0 disables retention entirely.
+   */
+  RETENTION_DAYS: z.coerce.number().int().nonnegative().default(90),
+
   WORKER_ID: z.string().optional(),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   WORKER_HEARTBEAT_SECONDS: z.coerce.number().int().positive().default(15),

@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ADD COLUMN "purgedAt" timestamp with time zone;

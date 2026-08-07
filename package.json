@@ -14,6 +14,7 @@
     "enqueue": "bun run scripts/enqueue.ts",
     "curate": "bun run scripts/curate.ts",
     "sandbox:setup": "bun run scripts/sandbox-setup.ts",
+    "retention": "bun run scripts/retention.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
