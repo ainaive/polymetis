@@ -194,3 +194,35 @@ describe("prepareWorkdir", () => {
     expect(readdirSync(root)).toEqual([]);
   });
 });
+
+describe("hosts a run may not reach", () => {
+  const rejected = [
+    "https://169.254.169.254/latest/meta-data/",
+    "https://metadata.google.internal/computeMetadata/v1/",
+    "https://localhost:8080/git/repo.git",
+    "https://127.0.0.1/repo.git",
+    "https://10.0.0.5/git/repo.git",
+    "https://192.168.1.10/repo.git",
+    "https://172.16.0.9/repo.git",
+    "https://[::1]/repo.git",
+    "https://[fe80::1]/repo.git",
+  ];
+
+  for (const url of rejected) {
+    test(`refuses ${url}`, () => {
+      // The worker runs inside the trust boundary. Cloning one of these is
+      // server-side request forgery driven by a run input.
+      expect(() => classifyRepoSource(url)).toThrow(/not reachable/);
+    });
+  }
+
+  test("still accepts an ordinary public host", () => {
+    expect(classifyRepoSource("https://github.com/o/r.git").kind).toBe("clone");
+  });
+
+  test("does not reject a public address that merely looks similar", () => {
+    // 172.32 is outside 172.16/12, and 169.253 is not link-local.
+    expect(classifyRepoSource("https://172.32.0.1/r.git").kind).toBe("clone");
+    expect(classifyRepoSource("https://169.253.0.1/r.git").kind).toBe("clone");
+  });
+});

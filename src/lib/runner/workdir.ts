@@ -64,7 +64,48 @@ export function classifyRepoSource(repo: string): RepoSource {
     throw new Error("repo URL must not embed credentials");
   }
 
+  // The worker runs inside the trust boundary, so an unrestricted host is
+  // server-side request forgery through the queue: a run input naming
+  // 169.254.169.254 or an address on the private network makes the worker
+  // reach it, and whatever comes back lands in a workdir that a replay may
+  // publish. Refuse the addresses that only mean "inside".
+  if (isForbiddenHost(url.hostname)) {
+    throw new Error(`repo host is not reachable from a run: ${url.hostname}`);
+  }
+
   return { kind: "clone", url: url.toString() };
+}
+
+/**
+ * True for hosts that only ever name something inside our own network.
+ *
+ * Literals only. A name that *resolves* to a private address still gets
+ * through, and closing that needs a resolve-then-pin step that git does not
+ * expose — worth doing when repositories become user-supplied in M3b, where
+ * this guard is the wrong layer anyway. Today the only caller is an operator
+ * running a script.
+ */
+export function isForbiddenHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
+  // The cloud metadata endpoints, which hand out credentials to anyone who asks.
+  if (host === "169.254.169.254" || host === "metadata.google.internal") return true;
+  // IPv6 loopback, link-local (fe80::/10) and unique-local (fc00::/7).
+  if (/^(::1|fe[89ab][0-9a-f]:|f[cd][0-9a-f]{2}:)/.test(host)) return true;
+
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!v4) return false;
+  const [a, b] = [Number(v4[1]), Number(v4[2])];
+  return (
+    a === 0 || // this network
+    a === 10 || // private
+    a === 127 || // loopback
+    (a === 169 && b === 254) || // link-local, including metadata
+    (a === 172 && b >= 16 && b <= 31) || // private
+    (a === 192 && b === 168) || // private
+    (a === 100 && b >= 64 && b <= 127) // carrier-grade NAT
+  );
 }
 
 /**
