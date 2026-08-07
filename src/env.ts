@@ -63,6 +63,11 @@ const schema = z.object({
 
   // Worker identity and liveness. A run whose heartbeat goes stale for longer
   // than the reaper's threshold is requeued (see ADR-0001).
+  // Runs a workspace may have queued or running at once. The token allowance
+  // is summed from settled runs, so it cannot see work still in flight; this is
+  // what stops a workspace starting twenty at once and blowing past the month.
+  WORKSPACE_MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(3),
+
   WORKER_ID: z.string().optional(),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   WORKER_HEARTBEAT_SECONDS: z.coerce.number().int().positive().default(15),

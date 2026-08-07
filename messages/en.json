@@ -42,6 +42,27 @@
       "unknown": "Unknown"
     }
   },
+  "newRun": {
+    "title": "New run",
+    "noTemplates": "No published templates yet. Run the seed script first.",
+    "submit": "Start run",
+    "submitting": "Queueing…",
+    "optional": "(optional)",
+    "errorHeading": "That run could not be started",
+    "quotaAllowance": "This workspace has used its token allowance for the month.",
+    "quotaConcurrency": "Too many runs in flight. Wait for one to finish, then try again.",
+    "notSignedIn": "Your session expired. Sign in again.",
+    "unknownTemplate": "That template is no longer available.",
+    "fields": {
+      "repo": "Repository",
+      "issue": "Issue",
+      "audience": "Audience"
+    },
+    "hints": {
+      "repo": "owner/name, or a GitHub URL. Public repositories only for now.",
+      "issue": "A GitHub issue URL. Its text is read before the run starts."
+    }
+  },
   "home": {
     "tagline": "Agent templates for software R&D",
     "headline": "Watch an agent turn a real issue into a real spec.",

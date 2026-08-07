@@ -42,6 +42,27 @@
       "unknown": "未知"
     }
   },
+  "newRun": {
+    "title": "新建运行",
+    "noTemplates": "还没有已发布的模板，请先运行种子脚本。",
+    "submit": "开始运行",
+    "submitting": "正在排队…",
+    "optional": "（可选）",
+    "errorHeading": "无法开始此次运行",
+    "quotaAllowance": "该工作区本月的 token 额度已用完。",
+    "quotaConcurrency": "同时进行的运行过多，请等待其中一个结束后重试。",
+    "notSignedIn": "登录状态已过期，请重新登录。",
+    "unknownTemplate": "该模板已不可用。",
+    "fields": {
+      "repo": "仓库",
+      "issue": "议题",
+      "audience": "读者"
+    },
+    "hints": {
+      "repo": "owner/name 或 GitHub 链接。目前仅支持公开仓库。",
+      "issue": "GitHub 议题链接，其正文会在运行开始前读取。"
+    }
+  },
   "home": {
     "tagline": "面向软件研发的 Agent 模板",
     "headline": "看 Agent 把一个真实 issue 变成一份真实的方案。",
