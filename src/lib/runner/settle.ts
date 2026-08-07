@@ -37,7 +37,8 @@ export type SettleInput = {
   workerId: string;
   /** Where the agent worked, for reading the deliverable back out. */
   workdir: string;
-  deliverable: Deliverable;
+  /** Null when the run failed before a template could even be resolved. */
+  deliverable: Deliverable | null;
   status: "succeeded" | "failed" | "cancelled" | "timed_out";
   totals: UsageTotals;
   lastSeq: number;
@@ -60,26 +61,31 @@ export async function settleRun(db: Db, input: SettleInput): Promise<SettleResul
   // row have to include it.
   const totals = await recordObservedUsage(db, input);
 
-  const artifact = await readDeliverable(input.workdir, input.deliverable);
+  const deliverable = input.deliverable;
+  const artifact = deliverable
+    ? await readDeliverable(input.workdir, deliverable)
+    : null;
 
   const problems: string[] = [];
   if (input.error) problems.push(input.error);
   if (input.tripped) {
     problems.push("the run token ceiling was reached and further requests were refused");
   }
-  if (input.status === "succeeded" && !artifact) {
+  if (deliverable && input.status === "succeeded" && !artifact) {
     // A run that reports success without producing the file it was contracted
     // to produce did not succeed; the deliverable is the whole output.
-    problems.push(`no ${input.deliverable.filename} was written`);
+    problems.push(`no ${deliverable.filename} was written`);
   }
   if (artifact && artifact.bytes > MAX_INLINE_ARTIFACT_BYTES) {
     problems.push(
-      `${input.deliverable.filename} is ${artifact.bytes} bytes and was not stored inline`,
+      `${deliverable!.filename} is ${artifact.bytes} bytes and was not stored inline`,
     );
   }
 
   const status =
-    input.status === "succeeded" && !artifact ? ("failed" as const) : input.status;
+    deliverable && input.status === "succeeded" && !artifact
+      ? ("failed" as const)
+      : input.status;
 
   return db.transaction(async (tx) => {
     // Close the queue row first, and only if it is still ours. A reaper that
@@ -114,14 +120,14 @@ export async function settleRun(db: Db, input: SettleInput): Promise<SettleResul
       })
       .where(eq(runs.id, input.runId));
 
-    if (artifact) {
+    if (artifact && deliverable) {
       await tx
         .insert(runArtifacts)
         .values({
           id: newId("art"),
           runId: input.runId,
-          path: input.deliverable.filename,
-          mime: MIME_FOR_FORMAT[input.deliverable.format],
+          path: deliverable.filename,
+          mime: MIME_FOR_FORMAT[deliverable.format],
           bytes: artifact.bytes,
           content: artifact.bytes <= MAX_INLINE_ARTIFACT_BYTES ? artifact.content : null,
         })
