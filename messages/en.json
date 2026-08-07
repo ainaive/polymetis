@@ -26,6 +26,22 @@
     "noAccount": "No account yet?",
     "genericError": "That did not work. Please try again."
   },
+  "dashboard": {
+    "title": "Your runs",
+    "newRun": "New run",
+    "empty": "No runs yet. Start one to see it here.",
+    "tokens": "tokens",
+    "allowance": "{remaining} of {allowance} tokens left this month",
+    "status": {
+      "queued": "Queued",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "timed_out": "Timed out",
+      "unknown": "Unknown"
+    }
+  },
   "home": {
     "tagline": "Agent templates for software R&D",
     "headline": "Watch an agent turn a real issue into a real spec.",

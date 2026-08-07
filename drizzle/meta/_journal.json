@@ -22,6 +22,13 @@
       "when": 1785979669962,
       "tag": "0002_supreme_jetstream",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786066119945,
+      "tag": "0003_mysterious_whiplash",
+      "breakpoints": true
     }
   ]
 }
