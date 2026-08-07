@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Db, DbClient } from "@/db";
 import { runQueue, runs } from "@/db/schema";
@@ -74,10 +74,18 @@ export async function claimNext(
       });
 
     if (!run) {
-      // The run was deleted between being queued and being claimed. Roll back
-      // so the queue row does not sit claimed by a worker that has nothing to
-      // run; the cascade will remove it.
-      tx.rollback();
+      // Unreachable in practice: runQueue.runId references runs.id ON DELETE
+      // CASCADE, so a deleted run takes its queue row with it (verified against
+      // the live schema — confdeltype 'c'). Kept as a backstop against the
+      // constraint ever being relaxed, because a queue row with no run would
+      // otherwise be re-claimed on every cycle forever.
+      //
+      // Deliberately not tx.rollback(): Drizzle implements that by throwing,
+      // so it would escape as "claim failed" rather than as this case.
+      await tx
+        .update(runQueue)
+        .set({ state: "failed", lockedBy: null, lockedAt: null })
+        .where(eq(runQueue.runId, row.runId));
       return null;
     }
 
@@ -102,7 +110,10 @@ export async function heartbeat(
 ): Promise<boolean> {
   const updated = await db
     .update(runQueue)
-    .set({ lockedAt: new Date() })
+    // The database's clock, matching claimNext's now() and reapStale's cutoff.
+    // Mixing in the worker's would let a skewed worker hold a dead claim past
+    // the timeout, or have the reaper take back a live one.
+    .set({ lockedAt: sql`now()` })
     .where(
       and(
         eq(runQueue.runId, runId),
@@ -129,13 +140,20 @@ export async function reapStale(
   db: Db,
   staleAfterSeconds: number,
 ): Promise<ReapedRun[]> {
-  const cutoff = new Date(Date.now() - staleAfterSeconds * 1000);
-
   return db.transaction(async (tx) => {
     const stale = await tx
       .select({ runId: runQueue.runId, attempts: runQueue.attempts })
       .from(runQueue)
-      .where(and(eq(runQueue.state, "claimed"), lt(runQueue.lockedAt, cutoff)))
+      .where(
+        and(
+          eq(runQueue.state, "claimed"),
+          // Computed in SQL, against the same clock that wrote lockedAt. A
+          // cutoff built from the worker's clock compares two different
+          // clocks, and the difference decides whether a live run is taken
+          // away from the worker still driving it.
+          sql`${runQueue.lockedAt} < now() - make_interval(secs => ${staleAfterSeconds})`,
+        ),
+      )
       .for("update", { skipLocked: true });
 
     if (stale.length === 0) return [];
@@ -146,7 +164,7 @@ export async function reapStale(
     if (requeue.length > 0) {
       await tx
         .update(runQueue)
-        .set({ state: "pending", lockedBy: null, lockedAt: null, runAfter: new Date() })
+        .set({ state: "pending", lockedBy: null, lockedAt: null, runAfter: sql`now()` })
         .where(inArray(runQueue.runId, requeue));
       await tx
         .update(runs)
@@ -166,7 +184,7 @@ export async function reapStale(
         .update(runs)
         .set({
           status: "failed",
-          endedAt: new Date(),
+          endedAt: sql`now()`,
           error: `abandoned after ${MAX_ATTEMPTS} attempts`,
         })
         .where(inArray(runs.id, giveUp));
@@ -197,7 +215,7 @@ export async function releaseClaim(
         state: "pending",
         lockedBy: null,
         lockedAt: null,
-        runAfter: new Date(),
+        runAfter: sql`now()`,
         attempts: sql`GREATEST(${runQueue.attempts} - 1, 0)`,
       })
       .where(and(eq(runQueue.runId, runId), eq(runQueue.lockedBy, workerId)))

@@ -125,23 +125,34 @@ async function main() {
   await new Promise((r) => setTimeout(r, 250));
   check("the holding transaction locked a row", lockedRunId !== undefined);
 
-  // Without SKIP LOCKED this blocks on the held row until the holder commits,
-  // so it is raced against a deadline: a claim that has to wait for an unrelated
-  // worker's ten-minute run is a broken queue, not a slow one.
-  const b = await Promise.race([
-    claimNext(db, "worker-b"),
-    new Promise<"blocked">((r) => setTimeout(() => r("blocked"), 3_000)),
-  ]);
+  try {
 
-  check("a claim is not blocked by another worker's in-flight claim", b !== "blocked");
-  check(
-    "a contending worker takes a different run",
-    b !== "blocked" && b !== null && b.runId !== lockedRunId,
-    `locked ${lockedRunId}, claimed ${b === "blocked" ? "nothing" : b?.runId}`,
-  );
+    // Without SKIP LOCKED this blocks on the held row until the holder commits,
+    // so it is raced against a deadline: a claim that has to wait for an unrelated
+    // worker's ten-minute run is a broken queue, not a slow one.
+    const b = await Promise.race([
+      claimNext(db, "worker-b"),
+      new Promise<"blocked">((r) => setTimeout(() => r("blocked"), 3_000)),
+    ]);
 
-  releaseHold();
-  await holder;
+    check("a claim is not blocked by another worker's in-flight claim", b !== "blocked");
+    check(
+      "a contending worker takes a different run",
+      b !== "blocked" && b !== null && b.runId !== lockedRunId,
+      `locked ${lockedRunId}, claimed ${b === "blocked" ? "nothing" : b?.runId}`,
+    );
+  } finally {
+    // Always, even if a check above threw. The holder keeps a row lock on
+    // runQueue, and teardown deletes those rows — so leaving the transaction
+    // open makes the whole verification hang on its own lock instead of
+    // reporting FAIL. Awaiting it here also observes the promise, which is
+    // otherwise an unhandled rejection if the holder itself fails.
+    releaseHold();
+    await holder.catch((error) => {
+      failures++;
+      console.error(`FAIL  the lock-holding transaction failed — ${error}`);
+    });
+  }
 
   // The row the holder locked was never claimed — its transaction only took a
   // lock — so it is still pending and can be claimed now.
