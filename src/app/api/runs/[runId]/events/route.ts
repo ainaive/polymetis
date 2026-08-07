@@ -180,6 +180,10 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     signal.addEventListener("abort", done, { once: true });
     function done() {
       clearTimeout(timer);
+      // `once` removes the listener only after it fires, and on the timer path
+      // it never does. Without this every poll leaves one behind on a signal
+      // that lives as long as the connection.
+      signal.removeEventListener("abort", done);
       resolve();
     }
   });
