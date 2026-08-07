@@ -221,7 +221,16 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
     });
   } finally {
     clearInterval(beat);
-    workdir?.release();
+    try {
+      workdir?.release();
+    } catch (error) {
+      // release() is an rmSync, and `force` suppresses only ENOENT — a mount
+      // still held open gives EBUSY. Letting that escape rejects this run's
+      // promise, which nothing is awaiting until shutdown, so Bun would kill
+      // the worker and abandon every other run it is driving. A leaked temp
+      // directory is the cheaper failure by a wide margin.
+      log(`${claim.runId} could not remove its workdir: ${error}`);
+    }
     inFlight.delete(claim.runId);
   }
 }
@@ -266,7 +275,14 @@ async function main() {
       // The controller is created here, not inside runOne, because shutdown
       // has to be able to abort a run this loop is no longer watching.
       const abort = new AbortController();
-      inFlight.set(claim.runId, { claim, abort, done: runOne(claim, abort) });
+      // The catch is a backstop, not decoration. Nothing awaits `done` until
+      // shutdown, which may be hours away, so any rejection escaping runOne is
+      // an unhandled rejection first and a shutdown concern second — and Bun
+      // terminates the process on one, taking every concurrent run with it.
+      const done = runOne(claim, abort).catch((error) => {
+        log(`${claim.runId} ended abnormally: ${error}`);
+      });
+      inFlight.set(claim.runId, { claim, abort, done });
     }
 
     if (!claimedAny) {
