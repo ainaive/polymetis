@@ -8,9 +8,11 @@ import {
   reapStale,
   type ClaimedRun,
 } from "@/lib/queue/claim";
+import { fetchIssue } from "@/lib/github/issue";
 import { executeRun } from "@/lib/runner/execute";
 import { settleRun } from "@/lib/runner/settle";
 import { prepareWorkdir, type PreparedWorkdir } from "@/lib/runner/workdir";
+import { parseIssueRef } from "@/lib/templates/contract";
 
 /**
  * Worker entrypoint. Runs directly under Bun (`bun run worker`), outside
@@ -53,6 +55,30 @@ function log(message: string) {
   console.log(`[worker ${workerId}] ${message}`);
 }
 
+/**
+ * The issue the agent is given.
+ *
+ * Two callers write `inputs.issue` differently and both are legitimate: the
+ * browser form stores a GitHub issue URL, because that is what the template
+ * contract declares and what a person has to hand; scripts/enqueue.ts stores
+ * the text itself, because a local issue file has no URL. Fetching happens on
+ * the host either way — egress is default-deny inside the sandbox, so an agent
+ * handed a URL would have no way to read it (ADR-0002).
+ */
+async function resolveIssue(input: string | undefined): Promise<{
+  text: string;
+  ref?: { owner: string; name: string; number: number; title: string };
+}> {
+  const value = input?.trim() ?? "";
+  if (value === "") return { text: "" };
+
+  const ref = parseIssueRef(value);
+  if (!ref) return { text: value };
+
+  const fetched = await fetchIssue(ref);
+  return { text: fetched.text, ref: { ...ref, title: fetched.title } };
+}
+
 async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> {
   let workdir: PreparedWorkdir | null = null;
 
@@ -85,12 +111,15 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
 
     workdir = await prepareWorkdir({ runId: claim.runId, repo });
 
+    const issue = await resolveIssue(claim.inputs.issue);
+
     const result = await executeRun(db, {
       runId: claim.runId,
       workdir: workdir.path,
       template,
       inputs: claim.inputs,
-      issue: claim.inputs.issue ?? "",
+      issue: issue.text,
+      ...(issue.ref ? { issueRef: issue.ref } : {}),
       abortController: abort,
       proxyPort,
     });
