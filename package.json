@@ -13,6 +13,7 @@
     "worker": "bun run src/worker/index.ts",
     "enqueue": "bun run scripts/enqueue.ts",
     "curate": "bun run scripts/curate.ts",
+    "sandbox:setup": "bun run scripts/sandbox-setup.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",

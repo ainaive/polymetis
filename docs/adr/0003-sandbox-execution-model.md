@@ -99,11 +99,14 @@ What this costs:
   failure rather than a warning.
 - **Two SDK version pins must stay in step** — the worker's dependency and the
   image's `AGENT_SDK_VERSION`. A mismatch fails at run time, not build time.
-- **Egress restriction is declared but not yet verified.** The container is
-  launched on a named network with only the proxy reachable by name, but no
-  container runtime was available when this was written, so
-  `scripts/verify/sandbox-isolation.ts` has not been run. Until it has, treat
-  network isolation as intended rather than proven.
+- **Egress restriction was declared here and was wrong.** This ADR called for a
+  network created `--internal` while also reaching a host-side proxy through
+  the gateway that `--internal` removes; the two cannot both hold, and no run
+  ever exposed it because nothing created the network at all. **ADR-0005
+  corrects this**: the network is an ordinary bridge, and egress denial is a
+  host firewall rule. `scripts/verify/sandbox-isolation.ts` now exists and is
+  what settles whether it works; until it has been run against a real runtime,
+  treat network isolation as intended rather than proven.
 - **The proxy is a single point of failure** for every run on a worker. It is
   in-process with the worker, so it dies with it, which is the correct
   coupling — but it means a proxy bug fails runs rather than degrading them.

@@ -31,7 +31,14 @@ export type SandboxConfig = {
   memory?: string;
   cpus?: string;
   pidsLimit?: number;
-  /** Docker network. Created `--internal` in production so egress is denied. */
+  /**
+   * Docker network, created by `bun run sandbox:setup`.
+   *
+   * An ordinary bridge, not `--internal`: an internal network has no gateway,
+   * and the gateway is how the container reaches the host-side proxy. Creating
+   * it does not deny egress — that is a host firewall rule on the bridge
+   * (ADR-0005).
+   */
   network?: string;
   /** The CLI to invoke. Overridable for podman, and for testing this module. */
   dockerBinary?: string;
