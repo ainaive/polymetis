@@ -55,7 +55,6 @@ describe("assertProductionSafe", () => {
     NODE_ENV: "production",
     BETTER_AUTH_SECRET: "x".repeat(32),
     DATABASE_URL: "postgres://user:pw@db.internal:5432/polymetis",
-    SANDBOX_MODE: "docker",
   };
 
   const check =
@@ -71,25 +70,18 @@ describe("assertProductionSafe", () => {
     expect(
       check({
         NODE_ENV: "development",
-        SANDBOX_MODE: "none",
         BETTER_AUTH_SECRET: "dev-secret-change-me",
         DATABASE_URL: undefined,
       }),
     ).not.toThrow();
   });
 
-  test("refuses SANDBOX_MODE=none in production", () => {
-    expect(check({ SANDBOX_MODE: "none" })).toThrow(/unsandboxed/);
-  });
-
-  // The regression this function was extracted for. NEXT_PHASE is set by
-  // Next.js, not by an operator, so a stale value in a shared env file or a
-  // base image used to disable every production guard at once — including the
-  // one AGENTS.md says must never be weakened.
-  test("refuses SANDBOX_MODE=none even during the build phase", () => {
-    expect(check({ SANDBOX_MODE: "none" }, { isBuildPhase: true })).toThrow(
-      /unsandboxed/,
-    );
+  // The sandbox guard deliberately does NOT live here — see assertSandboxAllowed
+  // in src/lib/runner/execute.ts. A check at env load binds `next build` too,
+  // which would need a NEXT_PHASE exemption, and that exemption is exactly what
+  // a worker must not be able to inherit.
+  test("says nothing about the sandbox", () => {
+    expect(Object.keys(production)).not.toContain("SANDBOX_MODE");
   });
 
   test("refuses the dev fallback secret in production", () => {

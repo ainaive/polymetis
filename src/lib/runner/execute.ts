@@ -58,6 +58,31 @@ export type ExecuteRunResult = RunAgentResult & {
   tripped: boolean;
 };
 
+/**
+ * Refuse to run an agent unsandboxed in production (ADR-0003).
+ *
+ * `SANDBOX_MODE=none` runs a model-driven agent over untrusted repository
+ * content directly on the host, with the worker's own filesystem and network.
+ * It exists so the driver can be developed before a container runtime is
+ * available; in production it is the whole threat model deleted.
+ *
+ * This lives at the point of use rather than at env load. A load-time check
+ * binds every process that imports `env`, including `next build`, which
+ * evaluates server modules with NODE_ENV=production and no sandbox configured
+ * — so it needs a build-phase exemption, and that exemption keys on
+ * `NEXT_PHASE`, a Next.js-owned variable a worker never sets deliberately. A
+ * stale value in a shared env file or a base image would then disable the guard
+ * in the one process it is meant to protect. Nothing reaches this function that
+ * is not about to spawn an agent, so it needs no exemption and has none.
+ */
+export function assertSandboxAllowed(mode: string, nodeEnv: string): void {
+  if (mode === "docker") return;
+  if (nodeEnv !== "production") return;
+  throw new Error(
+    "SANDBOX_MODE=none runs the agent unsandboxed on the host and must never be used in production — set SANDBOX_MODE=docker",
+  );
+}
+
 export async function executeRun(
   db: DbClient,
   options: ExecuteRunOptions,
@@ -107,6 +132,7 @@ export async function executeRun(
     });
 
   if (env.SANDBOX_MODE !== "docker") {
+    assertSandboxAllowed(env.SANDBOX_MODE, env.NODE_ENV);
     const result = await drive(null);
     return { ...result, observed: null, tripped: false };
   }
