@@ -38,8 +38,13 @@ never renumbered.
 > and why nothing anywhere deletes an individual event.
 >
 > Demo, public and unlisted runs are never purged: the gallery and any link
-> someone has shared must keep working. See `src/lib/runs/retention.ts`. Event payloads are typed and validated by Zod schemas over a
-closed set of event types.
+> someone has shared must keep working. Only a terminal run is eligible — a
+> queued or running one still has an appender holding a seq counter, and
+> deleting under it would leave a log with a gap. See
+> `src/lib/runs/retention.ts`.
+
+Event payloads are typed and validated by Zod schemas over a closed set of
+event types.
 
 `run` keeps only derived, terminal facts (status, totals, timestamps).
 

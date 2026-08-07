@@ -49,6 +49,18 @@ const fixtures = [
   // apart is a bug this must not compound by deleting the gallery.
   { key: "oldPrivateDemo", visibility: "private", isDemo: true, at: OLD, survives: true },
   { key: "recentPrivate", visibility: "private", isDemo: false, at: RECENT, survives: true },
+  // Old, private, and still going. Its appender holds a seq counter: deleting
+  // under it would not stop the writes, and the next append would resume from
+  // a number with nothing beneath it — a log with a gap.
+  {
+    key: "oldRunning",
+    visibility: "private",
+    isDemo: false,
+    at: OLD,
+    survives: true,
+    status: "running",
+  },
+  { key: "oldQueued", visibility: "private", isDemo: false, at: OLD, survives: true, status: "queued" },
 ] as const;
 
 const runIds: Record<string, string> = {};
@@ -88,7 +100,7 @@ async function setup() {
       workspaceId,
       templateVersionId: versionId,
       inputs: {},
-      status: "succeeded",
+      status: "status" in f ? f.status : "succeeded",
       visibility: f.visibility,
       isDemo: f.isDemo,
       queuedAt: f.at,
@@ -215,7 +227,13 @@ try {
   failures++;
   console.error("FAIL  the verification itself threw", error);
 } finally {
-  await teardown().catch((error) => console.error("teardown failed", error));
+  await teardown().catch((error) => {
+    // A failed teardown is a failure. Reporting PASS while fixtures are still
+    // in the database hands the next run a dirty starting state and blames it
+    // for this one's mess.
+    failures++;
+    console.error("FAIL  teardown left fixtures behind —", error);
+  });
 }
 
 console.log(failures === 0 ? "\nretention: PASS" : `\nretention: ${failures} FAILED`);

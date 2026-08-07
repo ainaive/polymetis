@@ -28,6 +28,8 @@ export type PurgeCandidate = {
 export type PurgeResult = {
   /** Runs whose logs were removed, or would be in a dry run. */
   purged: PurgeCandidate[];
+  /** Eligible by age and visibility, but holding artifacts stored externally. */
+  skipped: string[];
   dryRun: boolean;
 };
 
@@ -63,7 +65,7 @@ export async function purgeExpiredRuns(
 
   // Zero disables retention rather than meaning "purge everything today",
   // which is the reading that would destroy a database on a typo.
-  if (options.retentionDays <= 0) return { purged: [], dryRun };
+  if (options.retentionDays <= 0) return { purged: [], skipped: [], dryRun };
 
   const cutoff = new Date(
     options.now.getTime() - options.retentionDays * 24 * 60 * 60 * 1000,
@@ -80,6 +82,13 @@ export async function purgeExpiredRuns(
       artifacts: sql<string>`(
         select count(*) from "runArtifacts" a where a."runId" = "runs"."id"
       )`,
+      // Artifacts whose bytes live outside the database. Nothing sets this
+      // today, but deleting the row would lose the only pointer to the object,
+      // orphaning it in storage with no way to find it again.
+      external: sql<string>`(
+        select count(*) from "runArtifacts" a
+        where a."runId" = "runs"."id" and a."storageKey" is not null
+      )`,
     })
     .from(runs)
     .where(
@@ -87,6 +96,12 @@ export async function purgeExpiredRuns(
         eq(runs.visibility, "private"),
         eq(runs.isDemo, false),
         isNull(runs.purgedAt),
+        // Terminal only. A queued or running run still has an appender holding
+        // a seq counter: deleting its events would not stop the writes, and the
+        // next append would continue from 200 with no 1..199 — a log with a gap,
+        // which is precisely the state the complete-or-absent invariant exists
+        // to prevent. A stuck run is the reaper's problem, not retention's.
+        inArray(runs.status, ["succeeded", "failed", "cancelled", "timed_out"]),
         // queuedAt, not endedAt: a run that never finished still occupies the
         // same storage, and is if anything less worth keeping.
         lt(runs.queuedAt, cutoff),
@@ -94,7 +109,14 @@ export async function purgeExpiredRuns(
     )
     .limit(options.limit ?? 500);
 
-  const purged: PurgeCandidate[] = candidates.map((row) => ({
+  // Fail closed on external content. Deleting the row first loses the storage
+  // key, and a later retry has nothing to retry with; marking the run purged
+  // while its bytes are still in a bucket is worse than not purging it. When
+  // object storage lands, this is where its deletion goes — before the row.
+  const withExternal = candidates.filter((row) => Number(row.external) > 0);
+  const eligible = candidates.filter((row) => Number(row.external) === 0);
+
+  const purged: PurgeCandidate[] = eligible.map((row) => ({
     runId: row.runId,
     visibility: row.visibility,
     isDemo: row.isDemo,
@@ -102,7 +124,9 @@ export async function purgeExpiredRuns(
     artifacts: Number(row.artifacts),
   }));
 
-  if (dryRun || purged.length === 0) return { purged, dryRun };
+  const skipped = withExternal.map((row) => row.runId);
+
+  if (dryRun || purged.length === 0) return { purged, skipped, dryRun };
 
   const ids = purged.map((row) => row.runId);
 
@@ -117,5 +141,5 @@ export async function purgeExpiredRuns(
       .where(inArray(runs.id, ids));
   });
 
-  return { purged, dryRun: false };
+  return { purged, skipped, dryRun: false };
 }

@@ -149,7 +149,13 @@ try {
   failures++;
   console.error("FAIL  the verification itself threw", error);
 } finally {
-  await teardown().catch((e) => console.error("teardown failed", e));
+  await teardown().catch((error) => {
+    // A failed teardown is a failure. Reporting PASS while fixtures are still
+    // in the database hands the next run a dirty starting state and blames it
+    // for this one's mess.
+    failures++;
+    console.error("FAIL  teardown left fixtures behind —", error);
+  });
 }
 
 console.log(
