@@ -112,7 +112,9 @@ M1 deliberately builds the gallery and replay player against a hand-authored
 fixture with no runtime at all: it makes the event schema prove itself before
 anything depends on it, and lets all UI work proceed at zero token cost.
 
-**Private repositories go through a GitHub App** (ADR-0004). The worker clones
+**Private repositories go through a GitHub App** (ADR-0004), which is built but
+**not yet registered** — see issue #5 for the registration steps and what to
+verify once it exists. Public repositories are unaffected. The worker clones
 on the host and bind-mounts the result (ADR-0002), with the operator's git
 credentials stripped from the clone environment, so a repository is reachable
 only through a credential the workspace consented to. That credential is a
