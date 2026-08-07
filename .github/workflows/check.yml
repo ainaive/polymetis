@@ -99,7 +99,8 @@ jobs:
             -p tcp --dport 7777 -j ACCEPT
       # The proxy-reachability probe needs a listener where the worker's proxy
       # would be. Background processes survive across steps in a job.
-      - run: bun -e 'Bun.listen({ hostname: "0.0.0.0", port: 7777, socket: { data() {} } })' &
+      - run: |
+          bun -e 'Bun.listen({ hostname: "0.0.0.0", port: 7777, socket: { data() {} } })' &
       # The script exits 0 on SKIP by design (a laptop without Docker must not
       # go red). In this job a skip is a broken job, not a pass, so the PASS
       # line is asserted explicitly.
