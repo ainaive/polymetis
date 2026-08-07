@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  ftruncateSync,
+  mkdtempSync,
+  openSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +15,12 @@ import type { UsageTotals } from "@/lib/events/fold";
 import type { RunEventInput } from "@/lib/events/schema";
 import type { Deliverable } from "@/lib/templates/contract";
 
-import { OBSERVED_MODEL, settleRun, type SettleInput } from "./settle";
+import {
+  MAX_READ_ARTIFACT_BYTES,
+  OBSERVED_MODEL,
+  settleRun,
+  type SettleInput,
+} from "./settle";
 
 const deliverable: Deliverable = {
   filename: "SPEC.md",
@@ -55,12 +67,20 @@ function stubDb(captured: Captured, options: { claimHeld?: boolean } = {}) {
       },
     }),
     insert: () => ({
-      values: (row: Record<string, unknown>) => ({
-        onConflictDoUpdate: () => {
-          captured.artifacts.push(row);
+      values: (row: Record<string, unknown> | { type: string; payload: unknown }[]) => {
+        // appendEvents passes an array and awaits it; the artifact upsert passes
+        // one row and chains onConflictDoUpdate.
+        if (Array.isArray(row)) {
+          for (const event of row) captured.appended.push(event as unknown as RunEventInput);
           return Promise.resolve();
-        },
-      }),
+        }
+        return {
+          onConflictDoUpdate: () => {
+            captured.artifacts.push(row);
+            return Promise.resolve();
+          },
+        };
+      },
     }),
   };
 
@@ -162,6 +182,81 @@ describe("settleRun", () => {
     expect(result.settled).toBe(false);
     expect(c.runUpdates).toHaveLength(0);
     expect(c.artifacts).toHaveLength(0);
+  });
+
+  test("appends no usage event when the claim was lost", async () => {
+    // The append is permanent. A worker whose claim was reaped writing one
+    // means the next attempt's usage folds on top of it, and every reader of
+    // foldUsage double counts that run's tokens for good.
+    const c = capture();
+    const result = await settleRun(
+      stubDb(c, { claimHeld: false }),
+      base({
+        status: "timed_out",
+        totals: { ...noUsage },
+        observed: {
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 2_000_000,
+          cacheCreationTokens: 0,
+        },
+      }),
+    );
+
+    expect(c.appended).toHaveLength(0);
+    expect(result.settled).toBe(false);
+  });
+
+  describe("a deliverable that is not what it claims to be", () => {
+    test("a symlinked deliverable is not read", async () => {
+      // The agent has write access to the workdir, so it can replace the
+      // deliverable with a link to anything the worker can read — and the
+      // content would land in a replay built to be shared.
+      const dir = workdirWith(undefined);
+      const secret = join(mkdtempSync(join(tmpdir(), "polymetis-secret-")), "host.txt");
+      writeFileSync(secret, "SECRET-HOST-FILE");
+      symlinkSync(secret, join(dir, deliverable.filename));
+
+      const c = capture();
+      await settleRun(stubDb(c), base({ workdir: dir }));
+
+      expect(c.artifacts).toHaveLength(0);
+      expect(String(c.runUpdates[0]!.error)).toContain("no SPEC.md was written");
+    });
+
+    test("a deliverable behind a symlinked directory is not read", async () => {
+      // The file itself is a regular file; the escape is one level up.
+      const outside = mkdtempSync(join(tmpdir(), "polymetis-outside-"));
+      writeFileSync(join(outside, "SPEC.md"), "# not ours\n");
+      const dir = workdirWith(undefined);
+      symlinkSync(outside, join(dir, "nested"));
+
+      const c = capture();
+      await settleRun(
+        stubDb(c),
+        base({ workdir: dir, deliverable: { ...deliverable, filename: "nested/SPEC.md" } }),
+      );
+
+      expect(c.artifacts).toHaveLength(0);
+    });
+
+    test("an oversized deliverable is recorded but never read into memory", async () => {
+      const dir = workdirWith(undefined);
+      // Sparse: the point is the reported size, not writing a real 20 MB file.
+      const fd = openSync(join(dir, deliverable.filename), "w");
+      ftruncateSync(fd, MAX_READ_ARTIFACT_BYTES + 1);
+      closeSync(fd);
+
+      const c = capture();
+      await settleRun(stubDb(c), base({ workdir: dir }));
+
+      expect(c.artifacts[0]).toMatchObject({
+        bytes: MAX_READ_ARTIFACT_BYTES + 1,
+        // Not stored inline, and not loaded to find that out.
+        content: null,
+      });
+      expect(String(c.runUpdates[0]!.error)).toContain("not stored inline");
+    });
   });
 
   test("does not read a deliverable from outside the workdir", async () => {

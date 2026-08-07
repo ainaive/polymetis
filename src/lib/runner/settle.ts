@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { and, eq } from "drizzle-orm";
@@ -29,6 +29,13 @@ import type { Deliverable } from "@/lib/templates/contract";
  */
 export const MAX_INLINE_ARTIFACT_BYTES = 1_000_000;
 
+/**
+ * Never read a deliverable larger than this into memory. Ten times the inline
+ * limit: enough headroom to report the real size of an oversized file, without
+ * letting a run decide how much of the worker's heap to occupy.
+ */
+export const MAX_READ_ARTIFACT_BYTES = 10 * MAX_INLINE_ARTIFACT_BYTES;
+
 /** Model name on a usage event that came from the proxy rather than the SDK. */
 export const OBSERVED_MODEL = "observed-at-proxy";
 
@@ -57,9 +64,13 @@ export type SettleResult = {
 };
 
 export async function settleRun(db: Db, input: SettleInput): Promise<SettleResult> {
-  // Usage first, because it can add an event, and the totals written to the run
-  // row have to include it.
-  const totals = await recordObservedUsage(db, input);
+  // Computed now, appended later. The append is a permanent write to an
+  // append-only log, so it must not happen until this worker has proved it
+  // still owns the run — otherwise a worker whose claim was reaped writes a
+  // usage event that the next attempt's own usage then folds on top of, and
+  // every consumer of foldUsage double counts that run.
+  const observedUsage = pendingObservedUsage(input);
+  const totals = observedUsage ? foldUsage([observedUsage]) : input.totals;
 
   const deliverable = input.deliverable;
   const artifact = deliverable
@@ -103,7 +114,13 @@ export async function settleRun(db: Db, input: SettleInput): Promise<SettleResul
       .returning({ runId: runQueue.runId });
 
     if (closed.length === 0) {
-      return { settled: false, totals, artifactBytes: artifact?.bytes ?? null };
+      // Another worker owns this run. Nothing is written — not the run row, not
+      // the artifact, and above all not the usage event.
+      return { settled: false, totals: input.totals, artifactBytes: null };
+    }
+
+    if (observedUsage) {
+      await appendEvents(tx, input.runId, input.lastSeq, [observedUsage]);
     }
 
     await tx
@@ -164,7 +181,7 @@ const MIME_FOR_FORMAT: Record<Deliverable["format"], string> = {
  * is knowable is the half that matters — but the run's cost is understated, and
  * that is worth knowing when reading one of these.
  */
-async function recordObservedUsage(db: Db, input: SettleInput): Promise<UsageTotals> {
+function pendingObservedUsage(input: SettleInput): RunEventInput | null {
   const observed = input.observed;
   const alreadyCounted =
     input.totals.inputTokens > 0 ||
@@ -172,16 +189,16 @@ async function recordObservedUsage(db: Db, input: SettleInput): Promise<UsageTot
     input.totals.cacheReadTokens > 0 ||
     input.totals.cacheCreationTokens > 0;
 
-  if (alreadyCounted || !observed) return input.totals;
+  if (alreadyCounted || !observed) return null;
 
   const seen =
     observed.inputTokens +
     observed.outputTokens +
     observed.cacheReadTokens +
     observed.cacheCreationTokens;
-  if (seen === 0) return input.totals;
+  if (seen === 0) return null;
 
-  const event: RunEventInput = {
+  return {
     type: "usage",
     payload: {
       // A sentinel, not a model. The proxy counts bytes on the wire and never
@@ -195,12 +212,9 @@ async function recordObservedUsage(db: Db, input: SettleInput): Promise<UsageTot
       costUsd: 0,
     },
   };
-
-  await appendEvents(db, input.runId, input.lastSeq, [event]);
-  return foldUsage([event]);
 }
 
-type ReadArtifact = { content: string; bytes: number };
+type ReadArtifact = { content: string; bytes: number; tooLarge: boolean };
 
 /**
  * Read the deliverable the template contracted for, and nothing else.
@@ -219,10 +233,30 @@ async function readDeliverable(
   if (path !== root && !path.startsWith(`${root}/`)) return null;
 
   try {
-    const stats = await stat(path);
-    if (!stats.isFile()) return null;
-    const content = await readFile(path, "utf8");
-    return { content, bytes: Buffer.byteLength(content, "utf8") };
+    // lstat, not stat: the agent has write access to this directory and can
+    // replace the deliverable with a symlink to anything the worker can read.
+    // Comparing resolved *strings* does not notice that, stat follows the link,
+    // and the target's content would be stored in a publicly shareable replay.
+    const link = await lstat(path);
+    if (link.isSymbolicLink()) return null;
+    if (!link.isFile()) return null;
+
+    // And the directories above it: a/b/SPEC.md is a regular file even when `a`
+    // is a symlink out of the workdir. realpath resolves the whole chain.
+    const real = await realpath(path);
+    const realRoot = await realpath(root);
+    if (real !== realRoot && !real.startsWith(`${realRoot}/`)) return null;
+
+    // Size before content. Reading first and checking after means an agent can
+    // make the worker load an arbitrarily large file into memory to be told it
+    // was too large.
+    const stats = await stat(real);
+    if (stats.size > MAX_READ_ARTIFACT_BYTES) {
+      return { content: "", bytes: stats.size, tooLarge: true };
+    }
+
+    const content = await readFile(real, "utf8");
+    return { content, bytes: Buffer.byteLength(content, "utf8"), tooLarge: false };
   } catch {
     // Absent is the common case on a failed run, and not an error in itself —
     // the caller decides what a missing deliverable means for the status.
