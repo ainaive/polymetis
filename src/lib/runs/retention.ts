@@ -152,6 +152,13 @@ export async function purgeExpiredRuns(
           eligible,
           // Re-checked here too: an artifact that gained a storage key since
           // the scan would be orphaned in a bucket by the delete below.
+          //
+          // FOR UPDATE locks the rows this query returns — `runs` rows — and
+          // not the `runArtifacts` rows this subquery reads, so the artifact
+          // side is a read, not a reservation. Harmless while nothing writes
+          // storageKey, which nothing does. When object storage lands it will
+          // not be: lock the artifact rows too, or delete the objects before
+          // the rows, in the same place the comment above points at.
           sql`not exists (
             select 1 from "runArtifacts" a
             where a."runId" = "runs"."id" and a."storageKey" is not null

@@ -117,6 +117,14 @@ async function resolveIssue(input: string | undefined, token?: string): Promise<
 
 async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> {
   let workdir: PreparedWorkdir | null = null;
+  /**
+   * Whether anything may have appended to this run's log yet.
+   *
+   * Past this point a requeue could interleave a second attempt into an
+   * append-only log, so a failure has to be settled rather than handed back —
+   * including during shutdown, where handing back is otherwise the right move.
+   */
+  let executionStarted = false;
 
   // Prove we are still alive, and notice when the reaper decided we were not.
   const beat = setInterval(() => {
@@ -154,6 +162,7 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
 
     const issue = await resolveIssue(claim.inputs.issue, token);
 
+    executionStarted = true;
     const result = await executeRun(db, {
       runId: claim.runId,
       workdir: workdir.path,
@@ -185,17 +194,23 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
-    // A run that failed during setup while shutting down is not a failed run —
-    // it is one this worker will not finish, and nothing has been appended that
-    // says otherwise. Leave the claim held for shutdown() to hand back.
+    // A run that failed before execution began, while shutting down, is not a
+    // failed run — it is one this worker will not finish, and its log is still
+    // empty. Leave the claim held for shutdown() to hand back.
     //
-    // This is the only path that reaches releaseClaim. A run aborted mid-
-    // execution does NOT arrive here: the driver catches the abort, appends
-    // run.end{cancelled}, and returns normally, so it settles below as a
-    // terminal run. See the note in shutdown() for why that is currently the
-    // right outcome rather than a missed requeue.
-    if (shuttingDown) {
-      log(`${claim.runId} stopped for shutdown: ${message}`);
+    // `executionStarted` is load-bearing, not belt and braces. This catch also
+    // covers executeRun and settleRun, both of which run after the driver has
+    // appended events, so on `shuttingDown` alone a settle that failed on a
+    // database blip would return here, keep its claim, and be requeued by
+    // shutdown() — handing the next worker a log that already ends in run.end.
+    // Past the flag the only safe outcome is a terminal one, even mid-shutdown.
+    //
+    // A run aborted mid-execution does not arrive here at all: the driver
+    // catches the abort, appends run.end{cancelled}, and returns normally, so
+    // it settles above. See the note in shutdown() for why that is currently
+    // the right outcome rather than a missed requeue.
+    if (shuttingDown && !executionStarted) {
+      log(`${claim.runId} stopped for shutdown before it began: ${message}`);
       return;
     }
 
