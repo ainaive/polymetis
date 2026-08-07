@@ -7,6 +7,12 @@
  * rather than leaving it running with nothing behind it. Run in CI.
  *
  *   DATABASE_URL=... bun run scripts/verify/queue-claim.ts
+ *
+ * It refuses to run against a queue that already has work in it. claimNext
+ * takes whatever row is next — that is its job — so running this beside real
+ * work does not merely fail an assertion: it claims someone else's run,
+ * backdates its heartbeat, and reaps it until the attempt cap marks it failed.
+ * It destroyed a queued demo run exactly that way before this guard existed.
  */
 import { eq, inArray, sql } from "drizzle-orm";
 
@@ -92,6 +98,27 @@ async function staleHeartbeat(runId: string, secondsAgo: number) {
 }
 
 async function main() {
+  // Before anything: this operates on the real queue, and claimNext does not
+  // know which rows are ours.
+  const [busy] = await db
+    .select({ count: sql<string>`count(*)` })
+    .from(runQueue)
+    .where(inArray(runQueue.state, ["pending", "claimed"]));
+
+  if (Number(busy?.count ?? 0) > 0) {
+    console.error(
+      `FAIL  the queue has ${busy?.count} row(s) pending or claimed — refusing to run.`,
+    );
+    console.error(
+      "      Stop the worker and let the queue drain first; this verification",
+    );
+    console.error(
+      "      claims and reaps whatever it finds, including real runs.",
+    );
+    failures++;
+    return;
+  }
+
   await setup();
 
   // --- two workers contending for the same queue ----------------------------
