@@ -26,6 +26,10 @@ export async function SiteHeader({ locale }: { locale: string }) {
           Polymetis
         </Link>
 
+        <Button asChild variant="ghost" size="sm">
+          <Link href="/">{t("gallery")}</Link>
+        </Button>
+
         <div className="ml-auto flex items-center gap-1">
           <LocaleSwitcher
             current={locale}

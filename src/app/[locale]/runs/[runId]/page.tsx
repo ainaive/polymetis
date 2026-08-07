@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { getFormatter, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
+import { RunStatusBadge } from "@/components/dashboard/run-status-badge";
 import { LiveRun } from "@/components/replay/live-run";
 import { ReplayPlayer } from "@/components/replay/replay-player";
 import { Badge } from "@/components/ui/badge";
@@ -75,11 +76,10 @@ export default async function ReplayPage({ params }: Props) {
           {replay.run.isDemo ? (
             <Badge variant="outline">{t("demoRun")}</Badge>
           ) : null}
-          <Badge
-            variant={replay.run.status === "succeeded" ? "secondary" : "destructive"}
-          >
-            {replay.run.status}
-          </Badge>
+          {/* The same badge the dashboard uses. This printed the raw database
+              value, which is English in every locale — on the one page built to
+              be shared. */}
+          <RunStatusBadge status={replay.run.status} />
           <span className="text-muted-foreground font-mono text-xs tabular-nums">
             {format.number(
               replay.run.inputTokens +
