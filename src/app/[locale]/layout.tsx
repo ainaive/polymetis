@@ -45,7 +45,7 @@ export default async function LocaleLayout({
           remainder, not 100dvh. */}
       <body className="bg-background text-foreground flex min-h-dvh flex-col antialiased">
         <NextIntlClientProvider>
-          <SiteHeader />
+          <SiteHeader locale={locale} />
           <main className="flex min-h-0 flex-1 flex-col">{children}</main>
         </NextIntlClientProvider>
       </body>
