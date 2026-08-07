@@ -9,6 +9,7 @@ import {
   templates,
 } from "@/db/schema";
 import type { StoredEvent } from "@/lib/events/fold";
+import { canViewRun, type Viewer } from "@/lib/runs/access";
 import { readEvents } from "@/lib/events/store";
 
 export type ReplayData = {
@@ -16,6 +17,7 @@ export type ReplayData = {
     id: string;
     status: string;
     visibility: string;
+    workspaceId: string | null;
     isDemo: boolean;
     inputs: Record<string, string>;
     startedAt: Date | null;
@@ -47,6 +49,7 @@ export type ReplayData = {
 export async function getReplay(
   runId: string,
   locale: "en" | "zh",
+  viewer: Viewer = { workspaceId: null },
 ): Promise<ReplayData | null> {
   const [row] = await db
     .select({
@@ -61,6 +64,11 @@ export async function getReplay(
     .limit(1);
 
   if (!row) return null;
+
+  // Null, not a 403: whether a run exists is itself information, and a replay
+  // URL that answers "yes, but not for you" tells a stranger they guessed a
+  // real id. The caller renders notFound() either way.
+  if (!canViewRun(row.run, viewer)) return null;
 
   const [copy] = await db
     .select({ title: templateI18n.title, summary: templateI18n.summary })
@@ -84,6 +92,7 @@ export async function getReplay(
       id: row.run.id,
       status: row.run.status,
       visibility: row.run.visibility,
+      workspaceId: row.run.workspaceId,
       isDemo: row.run.isDemo,
       inputs: row.run.inputs,
       startedAt: row.run.startedAt,

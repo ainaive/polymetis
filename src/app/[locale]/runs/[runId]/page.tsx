@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { LiveRun } from "@/components/replay/live-run";
 import { ReplayPlayer } from "@/components/replay/replay-player";
 import { Badge } from "@/components/ui/badge";
+import { currentViewer } from "@/auth/viewer";
 import { getReplay } from "@/db/queries/runs";
 import { isTerminalRunStatus } from "@/lib/events/fold";
 import { Link } from "@/i18n/navigation";
@@ -15,7 +16,10 @@ type Props = { params: Promise<{ locale: Locale; runId: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { locale, runId } = await params;
-  const replay = await getReplay(runId, locale);
+  // The same viewer check: a page title is content, and returning one for a run
+  // the reader cannot open would leak the template and repository through a
+  // link preview.
+  const replay = await getReplay(runId, locale, await currentViewer());
   if (!replay) return {};
   return {
     title: `${replay.template.title} — Polymetis`,
@@ -27,7 +31,7 @@ export default async function ReplayPage({ params }: Props) {
   const { locale, runId } = await params;
   setRequestLocale(locale);
 
-  const replay = await getReplay(runId, locale);
+  const replay = await getReplay(runId, locale, await currentViewer());
   if (!replay) notFound();
 
   const t = await getTranslations("replay");
