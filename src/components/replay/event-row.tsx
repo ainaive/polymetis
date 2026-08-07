@@ -71,6 +71,11 @@ function EventBody({ frame }: { frame: ReplayFrame }) {
   // patterns with tags, not word fragments, so word order stays correct in
   // each locale.
   const t = useTranslations("replay.event");
+  // The same catalog RunStatusBadge reads: run.end carries the raw enum value,
+  // which is English in every locale, so it is translated before interpolation
+  // rather than rendered as-is. (The page header badge was fixed for exactly
+  // this; this row had the same leak.)
+  const tStatus = useTranslations("dashboard.status");
 
   switch (frame.type) {
     case "run.start": {
@@ -156,7 +161,7 @@ function EventBody({ frame }: { frame: ReplayFrame }) {
       return (
         <p className="text-muted-foreground">
           {t.rich("runEnd", {
-            status: frame.payload.status,
+            status: tStatus(frame.payload.status),
             duration: formatElapsed(frame.payload.durationMs),
             name: (chunks) => (
               <span className="text-foreground font-medium">{chunks}</span>

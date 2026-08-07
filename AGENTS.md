@@ -41,7 +41,9 @@ Read `docs/architecture.md` first; decisions and their rationale live in
   first.
 - **`SANDBOX_MODE=none` is a development-only foot-gun** (ADR-0003). It runs a
   model-driven agent over untrusted repository content directly on the host.
-  `src/env.ts` hard-fails on it in production; never weaken that guard.
+  `assertSandboxAllowed` in `src/lib/runner/execute.ts` hard-fails on it in
+  production, at the point of use (`src/env.ts` explains why the guard is not
+  there); never weaken it.
 - **Template versions are immutable.** Editing a published `templateVersion`
   breaks every replay pinned to it. Publish a new version instead.
 - **Migrations**: `bun run db:generate` after schema edits; never edit an

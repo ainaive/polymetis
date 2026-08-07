@@ -147,8 +147,9 @@ function writeEnvFile(env: Record<string, string>): {
  *
  * `none` runs the agent directly on the host, exactly as the validation spike
  * did. It exists so the driver and event mapping can be developed and tested
- * before a container runtime is available, and `src/env.ts` refuses it in
- * production — the mode flag is a foot-gun that the env guard closes.
+ * before a container runtime is available, and `assertSandboxAllowed` in
+ * src/lib/runner/execute.ts refuses it in production — the mode flag is a
+ * foot-gun that the guard closes at the point of use.
  */
 export function createSandboxSpawn(
   config: SandboxConfig,
@@ -160,7 +161,8 @@ export function createSandboxSpawn(
       // sandbox env filter here would strip the credential and point the agent
       // at a proxy that is not running, so `none` would authenticate against
       // nothing. This is the escape hatch behaving as an escape hatch, and it
-      // is why src/env.ts refuses the mode in production (ADR-0003).
+      // is why assertSandboxAllowed in src/lib/runner/execute.ts refuses the
+      // mode in production (ADR-0003).
       return spawnProcess(options.command, options.args, {
         cwd: options.cwd ?? config.workdir,
         env: options.env as NodeJS.ProcessEnv,

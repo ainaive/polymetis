@@ -86,7 +86,13 @@ export function classifyRepoSource(repo: string): RepoSource {
  * running a script.
  */
 export function isForbiddenHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  // Lowercased, brackets off an IPv6 literal, and a trailing dot removed — the
+  // resolver treats "localhost." as "localhost", so a string comparison must
+  // too or the dot walks straight past every name rule below.
+  const host = hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
 
   if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
   // The cloud metadata endpoints, which hand out credentials to anyone who asks.
@@ -94,7 +100,9 @@ export function isForbiddenHost(hostname: string): boolean {
   // IPv6 loopback, link-local (fe80::/10) and unique-local (fc00::/7).
   if (/^(::1|fe[89ab][0-9a-f]:|f[cd][0-9a-f]{2}:)/.test(host)) return true;
 
-  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  const v4 = (unmapV4(host) ?? host).match(
+    /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/,
+  );
   if (!v4) return false;
   const [a, b] = [Number(v4[1]), Number(v4[2])];
   return (
@@ -106,6 +114,22 @@ export function isForbiddenHost(hostname: string): boolean {
     (a === 192 && b === 168) || // private
     (a === 100 && b >= 64 && b <= 127) // carrier-grade NAT
   );
+}
+
+/**
+ * The dotted quad inside an IPv4-mapped IPv6 literal, or null. Such a literal
+ * names the same endpoint as its embedded v4 address, so it has to be judged
+ * as that address. The WHATWG parser renders the mapping in hex
+ * (`::ffff:7f00:1`); the dotted form arrives when a caller passes a raw string.
+ */
+function unmapV4(host: string): string | null {
+  const dotted = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (dotted) return dotted[1];
+  const hex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (!hex) return null;
+  const hi = Number.parseInt(hex[1], 16);
+  const lo = Number.parseInt(hex[2], 16);
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
 }
 
 /**

@@ -118,11 +118,20 @@
     "liveWaiting": "正在等待工作进程接管…",
     "liveReconnecting": "正在重新连接…",
     "replayFromStart": "从头回放",
+    "usageLine": "{tokens} 个 token · ${cost} · {seconds} 秒",
+    "eventType": {
+      "step_start": "步骤",
+      "agent_message": "消息",
+      "tool_call": "工具调用",
+      "tool_result": "工具结果",
+      "artifact_write": "写入",
+      "usage": "用量"
+    },
     "event": {
       "runStart": "已启动 <code>{template}</code>",
       "runStartOn": "已在 <code>{target}</code> 上启动 <code>{template}</code>",
       "artifactWrite": "已写入 <name>{target}</name>（{bytes} 字节）",
-      "usage": "{tokens} tokens · ${cost}",
+      "usage": "{tokens} 个 token · ${cost}",
       "runEnd": "运行<name>{status}</name>，耗时 {duration}"
     },
     "purged": "该运行的详细记录已于 {date} 移除，上方摘要为保留内容。"

@@ -13,7 +13,12 @@
  * asked for, strip anything credential-shaped, then inject our own.
  */
 
-/** Exact names that must never reach the sandbox. */
+/**
+ * Exact names that must never reach the sandbox. The tail of the list is
+ * credentials whose conventional names predate the `_SECRET`-style suffixes
+ * the rules below rely on — PGPASSWORD has no underscore for a suffix rule to
+ * find. Names like these have to be enumerated, so add here liberally.
+ */
 const DENIED_EXACT = new Set([
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -22,6 +27,10 @@ const DENIED_EXACT = new Set([
   "DATABASE_URL",
   "DATABASE_URL_UNPOOLED",
   "BETTER_AUTH_SECRET",
+  "PGPASSWORD",
+  "PGSSLKEY",
+  "MYSQL_PWD",
+  "REDISCLI_AUTH",
 ]);
 
 /** Prefixes covering whole credential families. */
@@ -57,6 +66,22 @@ export function isDeniedEnvVar(name: string): boolean {
   return false;
 }
 
+/**
+ * A value that is itself a credential: a URL carrying userinfo, the shape of
+ * DATABASE_URL, REDIS_URL, MONGODB_URI and their kin. Judged by value because
+ * such names end in `_URL`/`_URI`/`_DSN`, which no name rule can tell apart
+ * from a harmless endpoint — and the next one added will not be on any list.
+ */
+export function isCredentialBearingValue(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.username !== "" || url.password !== "";
+}
+
 export type SandboxEnvOptions = {
   /** The env the SDK built for a local spawn. */
   sdkEnv: Record<string, string | undefined>;
@@ -77,6 +102,7 @@ export function buildSandboxEnv(
   for (const [name, value] of Object.entries(options.sdkEnv)) {
     if (value === undefined) continue;
     if (isDeniedEnvVar(name)) continue;
+    if (isCredentialBearingValue(value)) continue;
     out[name] = value;
   }
 
