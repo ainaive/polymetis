@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import { isTerminalRunStatus } from "./fold";
-import { parseCursor, sseComment, sseFrame } from "./sse";
+import { runEventTypes } from "./schema";
+import {
+  parseCursor,
+  sseComment,
+  sseFrame,
+  sseStreamClosed,
+  STREAM_CLOSED_EVENT,
+} from "./sse";
 
 const event = {
   seq: 12,
@@ -51,6 +58,33 @@ describe("sseFrame", () => {
 describe("sseComment", () => {
   test("is a comment frame a client ignores", () => {
     expect(sseComment("keepalive")).toBe(": keepalive\n\n");
+  });
+});
+
+describe("sseStreamClosed", () => {
+  test("names an event outside the run vocabulary", () => {
+    // If this collided with a run event type the client's per-type listeners
+    // would try to parse it as a log entry, and it has no seq to parse.
+    expect(runEventTypes).not.toContain(STREAM_CLOSED_EVENT as never);
+    expect(sseStreamClosed("failed")).toContain(`event: ${STREAM_CLOSED_EVENT}`);
+  });
+
+  test("carries the terminal status", () => {
+    const line = sseStreamClosed("cancelled")
+      .split("\n")
+      .find((l) => l.startsWith("data: "))!;
+    expect(JSON.parse(line.slice(6))).toEqual({ status: "cancelled" });
+  });
+
+  test("sets no id, so the reconnect cursor stays on the last real event", () => {
+    // An `id:` here would become the client's Last-Event-ID. This frame is not
+    // in the log and has no seq, so it must not move the cursor.
+    expect(sseStreamClosed("failed")).not.toContain("id:");
+  });
+
+  test("is one complete frame", () => {
+    expect(sseStreamClosed("failed").endsWith("\n\n")).toBe(true);
+    expect(sseStreamClosed("failed").split("\n\n")).toHaveLength(2);
   });
 });
 
