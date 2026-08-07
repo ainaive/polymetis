@@ -185,9 +185,15 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
-    // A run stopped by shutdown is not a failed run — it is one this worker
-    // will not finish. Settling it here would record a terminal status for an
-    // attempt that shutdown() is about to hand back to the queue.
+    // A run that failed during setup while shutting down is not a failed run —
+    // it is one this worker will not finish, and nothing has been appended that
+    // says otherwise. Leave the claim held for shutdown() to hand back.
+    //
+    // This is the only path that reaches releaseClaim. A run aborted mid-
+    // execution does NOT arrive here: the driver catches the abort, appends
+    // run.end{cancelled}, and returns normally, so it settles below as a
+    // terminal run. See the note in shutdown() for why that is currently the
+    // right outcome rather than a missed requeue.
     if (shuttingDown) {
       log(`${claim.runId} stopped for shutdown: ${message}`);
       return;
@@ -315,10 +321,22 @@ async function shutdown(signal: string) {
     sleep(SHUTDOWN_GRACE_MS),
   ]);
 
-  // Give the claims back rather than letting them time out. The worker knows it
-  // will not finish; making another worker wait three heartbeats to discover
-  // that is a pause with no information in it. releaseClaim is guarded on
-  // lockedBy, so a run that settled normally in the meantime is left alone.
+  // Give back the claims that are still held rather than letting them time out.
+  // The worker knows it will not finish; making another worker wait three
+  // heartbeats to discover that is a pause with no information in it.
+  //
+  // In practice this reaches only runs that failed during setup (see runOne's
+  // catch). A run aborted mid-execution has already settled `cancelled`,
+  // because the driver appends run.end on abort, and releaseClaim is guarded on
+  // lockedBy — which that settle cleared.
+  //
+  // That is currently the outcome we want, not a gap to close. Requeueing such
+  // a run would hand the next worker a log that already ends in run.end, and
+  // the appender resumes at max(seq): attempt two would write run.start after a
+  // terminal event, in a log that cannot be repaired because it is append-only.
+  // A real requeue needs a fresh seq range per attempt, which is a schema and
+  // ADR-0001 change. Until then a run interrupted mid-flight is cancelled and
+  // has to be started again, which loses work but never the log's integrity.
   await Promise.all(
     entries.map((entry) =>
       releaseClaim(db, entry.claim.runId, workerId).catch((error) => {
