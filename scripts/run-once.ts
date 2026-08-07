@@ -64,14 +64,14 @@ if (!version) {
 }
 
 const runId = newId("run");
-// run.start records inputs verbatim and a replay has to stand alone, so this
-// has to name the actual source. It read "(inline)" unconditionally, which made
-// a run driven by an issue file indistinguishable from one using the built-in
-// sample — and the sample is the thing you would want to rule out first when a
-// replay looks wrong.
+// The same shape scripts/enqueue.ts writes, so a run driven from here and one
+// driven through the queue record the same thing: `issue` is the text the agent
+// was given, `issueSource` is where it came from. A replay has to stand alone,
+// and "(built-in sample)" is the first thing to rule out when one looks wrong.
 const inputs = {
   repo: repoPath,
-  issue: issuePath ?? "(built-in sample)",
+  issue,
+  issueSource: issuePath ?? "(built-in sample)",
   audience: "engineer",
 };
 
