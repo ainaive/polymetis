@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { assertProductionSafe, envSchema } from "./env";
+import { assertProductionSafe, DEV_FALLBACK_SECRET, envSchema } from "./env";
 
 describe("envSchema", () => {
   test("boots from an empty environment so M1 can run on fixtures alone", () => {
@@ -70,7 +70,7 @@ describe("assertProductionSafe", () => {
     expect(
       check({
         NODE_ENV: "development",
-        BETTER_AUTH_SECRET: "dev-secret-change-me",
+        BETTER_AUTH_SECRET: DEV_FALLBACK_SECRET,
         DATABASE_URL: undefined,
       }),
     ).not.toThrow();
@@ -85,7 +85,7 @@ describe("assertProductionSafe", () => {
   });
 
   test("refuses the dev fallback secret in production", () => {
-    expect(check({ BETTER_AUTH_SECRET: "dev-secret-change-me" })).toThrow(
+    expect(check({ BETTER_AUTH_SECRET: DEV_FALLBACK_SECRET })).toThrow(
       /BETTER_AUTH_SECRET/,
     );
   });

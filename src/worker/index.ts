@@ -316,10 +316,27 @@ async function shutdown(signal: string) {
   // immediately, but the driver is still appending its terminal events; giving
   // the run back first lets another worker claim it while the previous attempt
   // is still writing, and both attempts then interleave in one append-only log.
+  //
+  // Which runs finished has to be tracked individually. The race resolves as
+  // soon as the grace expires, and it cannot say who was slow — releasing on
+  // that signal alone would requeue a run whose driver is still mid-append,
+  // which is the exact hazard this wait exists to prevent.
+  const unwound = new Set<string>();
   await Promise.race([
-    Promise.allSettled(entries.map((entry) => entry.done)),
+    Promise.all(
+      entries.map((entry) => entry.done.then(() => unwound.add(entry.claim.runId))),
+    ),
     sleep(SHUTDOWN_GRACE_MS),
   ]);
+
+  const stillWriting = entries.filter((entry) => !unwound.has(entry.claim.runId));
+  if (stillWriting.length > 0) {
+    // Left claimed on purpose. The reaper takes them after three missed
+    // heartbeats, by which time this process is gone and nothing is appending.
+    log(
+      `${stillWriting.length} run(s) did not unwind within ${SHUTDOWN_GRACE_MS}ms — leaving their claims for the reaper`,
+    );
+  }
 
   // Give back the claims that are still held rather than letting them time out.
   // The worker knows it will not finish; making another worker wait three
@@ -338,11 +355,13 @@ async function shutdown(signal: string) {
   // ADR-0001 change. Until then a run interrupted mid-flight is cancelled and
   // has to be started again, which loses work but never the log's integrity.
   await Promise.all(
-    entries.map((entry) =>
-      releaseClaim(db, entry.claim.runId, workerId).catch((error) => {
-        log(`could not release ${entry.claim.runId}: ${error}`);
-      }),
-    ),
+    entries
+      .filter((entry) => unwound.has(entry.claim.runId))
+      .map((entry) =>
+        releaseClaim(db, entry.claim.runId, workerId).catch((error) => {
+          log(`could not release ${entry.claim.runId}: ${error}`);
+        }),
+      ),
   );
 
   log("done");

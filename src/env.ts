@@ -99,7 +99,8 @@ const schema = z.object({
 /** Exported for tests: parse a controlled input instead of process.env. */
 export const envSchema = schema;
 
-const DEV_FALLBACK_SECRET = "dev-secret-change-me";
+/** Exported for tests: the value the production guard must refuse. */
+export const DEV_FALLBACK_SECRET = "dev-secret-change-me";
 const DEV_FALLBACK_DB = "postgres://polymetis:polymetis@localhost:5432/polymetis";
 
 export type Env = Omit<
