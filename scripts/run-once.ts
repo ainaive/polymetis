@@ -12,16 +12,9 @@ import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import { db } from "@/db";
 import { runs, templateVersions, templates } from "@/db/schema";
-import { runAgent } from "@/lib/agent/driver";
 import { totalInputTokens } from "@/lib/events/fold";
 import { newId } from "@/lib/ids";
-import {
-  newRunToken,
-  resolveProxyCredential,
-  withCredentialProxy,
-  type CredentialProxy,
-} from "@/lib/sandbox/proxy";
-import { createSandboxSpawn } from "@/lib/sandbox/spawn";
+import { executeRun } from "@/lib/runner/execute";
 import { ISSUE_TO_SPEC_SLUG } from "@/lib/templates/issue-to-spec";
 import { env } from "@/env";
 
@@ -97,68 +90,38 @@ console.log(`model  ${version.model} (effort ${version.effort})`);
 console.log(`sandbox ${env.SANDBOX_MODE}\n`);
 
 const started = Date.now();
-const runToken = newRunToken();
 
-/** One place that builds the run, so both sandbox modes stay identical. */
-async function execute(proxy: CredentialProxy | null) {
-  return runAgent(db, {
-    runId,
-    workdir: repoPath,
-    template: {
-      slug: version.slug,
-      version: version.version,
-      directives: version.directives,
-      deliverable: version.deliverable,
-      toolPolicy: version.toolPolicy,
-      model: version.model,
-      effort: version.effort,
-    },
-    inputs,
-    issue,
-    timeoutSeconds: env.RUN_TIMEOUT_SECONDS,
-    spawn: createSandboxSpawn({
-      mode: env.SANDBOX_MODE,
-      image: env.SANDBOX_IMAGE,
-      // In `none` mode there is no container and no proxy; the spawn ignores
-      // both and lets the agent resolve credentials locally.
-      proxyBaseUrl: proxy?.baseUrl ?? "",
-      placeholderToken: runToken,
-      workdir: repoPath,
-      network: env.SANDBOX_NETWORK,
-      memory: env.SANDBOX_MEMORY,
-      cpus: env.SANDBOX_CPUS,
-    }),
-    onEvents: (events, lastSeq) => {
-      for (const event of events) {
-        const detail =
-          event.type === "tool.call"
-            ? `${event.payload.tool} ${event.payload.summary}`
-            : event.type === "agent.message"
-              ? event.payload.text.slice(0, 90)
-              : event.type === "artifact.write"
-                ? `${event.payload.path} (${event.payload.bytes} bytes)`
-                : "";
-        console.log(`  ${String(lastSeq).padStart(3)} ${event.type.padEnd(14)} ${detail}`);
-      }
-    },
-  });
-}
-
-// Docker mode reaches the API only through the proxy, so the proxy has to
-// exist for the whole run. Previously nothing started it and the container
-// pointed at a listener that was never opened.
-const result =
-  env.SANDBOX_MODE === "docker"
-    ? await withCredentialProxy(
-        {
-          port: env.SANDBOX_PROXY_PORT,
-          credential: resolveProxyCredential(env.ANTHROPIC_API_KEY),
-          runToken,
-          tokenCeiling: env.RUN_TOKEN_CEILING,
-        },
-        (proxy) => execute(proxy),
-      )
-    : await execute(null);
+// The proxy lifecycle, the sandbox spawn and the driver all live in
+// executeRun, so this script and the worker cannot drift apart on the one
+// sequence where drift means a credential relay left running.
+const result = await executeRun(db, {
+  runId,
+  workdir: repoPath,
+  template: {
+    slug: version.slug,
+    version: version.version,
+    directives: version.directives,
+    deliverable: version.deliverable,
+    toolPolicy: version.toolPolicy,
+    model: version.model,
+    effort: version.effort,
+  },
+  inputs,
+  issue,
+  onEvents: (events, lastSeq) => {
+    for (const event of events) {
+      const detail =
+        event.type === "tool.call"
+          ? `${event.payload.tool} ${event.payload.summary}`
+          : event.type === "agent.message"
+            ? event.payload.text.slice(0, 90)
+            : event.type === "artifact.write"
+              ? `${event.payload.path} (${event.payload.bytes} bytes)`
+              : "";
+      console.log(`  ${String(lastSeq).padStart(3)} ${event.type.padEnd(14)} ${detail}`);
+    }
+  },
+});
 
 await db
   .update(runs)
