@@ -145,8 +145,8 @@ export function buildCloneArgs(url: string, dest: string): string[] {
  */
 export type CloneEnv = Record<string, string | undefined>;
 
-export function cloneEnv(base: CloneEnv = process.env): CloneEnv {
-  return {
+export function cloneEnv(base: CloneEnv = process.env, token?: string): CloneEnv {
+  const env: CloneEnv = {
     PATH: base.PATH,
     // No global or system config, so no credential.helper and no insteadOf.
     GIT_CONFIG_NOSYSTEM: "1",
@@ -156,6 +156,25 @@ export function cloneEnv(base: CloneEnv = process.env): CloneEnv {
     GIT_ASKPASS: "",
     SSH_ASKPASS: "",
   };
+
+  if (!token) return env;
+
+  // The token goes in a header, through the environment (ADR-0004).
+  //
+  // Not in the URL: git writes remote.origin.url into .git/config, and that
+  // directory is bind-mounted into the sandbox — a credential there is exactly
+  // what ADR-0002 forbids. Not on the command line either: argv is readable
+  // through `ps` by every user on the host, which is the same reason the
+  // container's environment goes through a file rather than -e.
+  //
+  // GIT_CONFIG_COUNT applies these as if they were -c, without persisting them.
+  env.GIT_CONFIG_COUNT = "1";
+  env.GIT_CONFIG_KEY_0 = "http.extraheader";
+  env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${Buffer.from(
+    `x-access-token:${token}`,
+  ).toString("base64")}`;
+
+  return env;
 }
 
 export async function prepareWorkdir(options: {
@@ -163,6 +182,8 @@ export async function prepareWorkdir(options: {
   repo: string;
   root?: string;
   timeoutMs?: number;
+  /** Installation token for a private repository. Never persisted (ADR-0004). */
+  token?: string;
 }): Promise<PreparedWorkdir> {
   const source = classifyRepoSource(options.repo);
 
@@ -179,6 +200,7 @@ export async function prepareWorkdir(options: {
     runId: options.runId,
     root: options.root ?? WORKDIR_ROOT,
     timeoutMs: options.timeoutMs,
+    token: options.token,
   });
 }
 
@@ -189,7 +211,7 @@ export async function prepareWorkdir(options: {
  */
 export async function cloneInto(
   url: string,
-  options: { runId: string; root: string; timeoutMs?: number },
+  options: { runId: string; root: string; timeoutMs?: number; token?: string },
 ): Promise<PreparedWorkdir> {
   await mkdir(options.root, { recursive: true, mode: 0o700 });
   // mkdtemp rather than the run id: a retry of the same run must not collide
@@ -198,7 +220,11 @@ export async function cloneInto(
   const dest = join(dir, "repo");
 
   try {
-    await runGit(buildCloneArgs(url, dest), options.timeoutMs ?? 300_000);
+    await runGit(
+      buildCloneArgs(url, dest),
+      options.timeoutMs ?? 300_000,
+      options.token,
+    );
   } catch (error) {
     // A half-written clone is not something to leave in tmp for a human to
     // find; the run is going to fail either way.
@@ -220,10 +246,10 @@ function isDirectory(path: string): boolean {
   }
 }
 
-function runGit(args: string[], timeoutMs: number): Promise<void> {
+function runGit(args: string[], timeoutMs: number, token?: string): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn("git", args, {
-      env: cloneEnv() as NodeJS.ProcessEnv,
+      env: cloneEnv(process.env, token) as NodeJS.ProcessEnv,
       stdio: ["ignore", "ignore", "pipe"],
       timeout: timeoutMs,
     });
@@ -240,9 +266,18 @@ function runGit(args: string[], timeoutMs: number): Promise<void> {
       if (code === 0) return resolvePromise();
       reject(
         new Error(
-          `git clone failed (${signal ? `signal ${signal}` : `exit ${code}`}): ${stderr.trim() || "no output"}`,
+          // Redacted: git echoes the header it was given on some failures, and
+          // this message is stored on the run row and shown in the UI.
+          `git clone failed (${signal ? `signal ${signal}` : `exit ${code}`}): ${redact(stderr.trim(), token) || "no output"}`,
         ),
       );
     });
   });
+}
+
+
+/** Remove a token from text that is about to be stored or displayed. */
+function redact(text: string, token?: string): string {
+  if (!token) return text;
+  return text.split(token).join("[redacted]");
 }

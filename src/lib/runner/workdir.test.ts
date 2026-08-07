@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -226,3 +232,72 @@ describe("hosts a run may not reach", () => {
     expect(classifyRepoSource("https://169.253.0.1/r.git").kind).toBe("clone");
   });
 });
+
+describe("a token for a private repository", () => {
+  const TOKEN = "ghs_installationtokenvalue";
+
+  test("travels in the environment, not in argv", () => {
+    // argv is readable through `ps` by every user on the host — the same reason
+    // the container's environment goes through a file rather than -e.
+    const args = buildCloneArgs("https://github.com/o/private.git", "/w/repo");
+    expect(args.join(" ")).not.toContain(TOKEN);
+    expect(args.join(" ")).not.toContain("extraheader");
+  });
+
+  test("is sent as an Authorization header through git config", () => {
+    const env = cloneEnv({ PATH: "/usr/bin" }, TOKEN);
+    expect(env.GIT_CONFIG_COUNT).toBe("1");
+    expect(env.GIT_CONFIG_KEY_0).toBe("http.extraheader");
+
+    const value = env.GIT_CONFIG_VALUE_0!;
+    expect(value.startsWith("Authorization: Basic ")).toBe(true);
+    expect(
+      Buffer.from(value.replace("Authorization: Basic ", ""), "base64").toString(),
+    ).toBe(`x-access-token:${TOKEN}`);
+  });
+
+  test("adds nothing when there is no token", () => {
+    const env = cloneEnv({ PATH: "/usr/bin" });
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
+  });
+
+  test("a real clone leaves no credential in the checkout", async () => {
+    // The property ADR-0004 claims, checked rather than asserted: .git/config
+    // is inside the bind mount, so a token written there would be handed to the
+    // agent along with the code.
+    const origin = makeOrigin("polymetis-private-");
+    const root = mkdtempSync(join(tmpdir(), "polymetis-tokenroot-"));
+
+    const prepared = await cloneInto(`file://${origin}`, {
+      runId: "run_tok",
+      root,
+      token: TOKEN,
+    });
+
+    const config = readFileSync(join(prepared.path, ".git", "config"), "utf8");
+    expect(config).not.toContain(TOKEN);
+    expect(config).not.toContain("extraheader");
+    // The remote is the plain URL, with no credential spliced into it.
+    expect(config).toContain(`file://${origin}`);
+
+    // Nothing anywhere else in .git either. Walked in JS rather than shelled
+    // out to grep, which exits non-zero on "found nothing" — the very outcome
+    // being asserted.
+    expect(filesContaining(join(prepared.path, ".git"), TOKEN)).toEqual([]);
+  });
+});
+
+/** Every file under `dir` whose bytes contain `needle`. */
+function filesContaining(dir: string, needle: string): string[] {
+  const hits: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      hits.push(...filesContaining(path, needle));
+    } else if (entry.isFile() && readFileSync(path).includes(needle)) {
+      hits.push(path);
+    }
+  }
+  return hits;
+}
