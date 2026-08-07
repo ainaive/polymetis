@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -126,17 +126,4 @@ export async function workspaceUsage(
     inFlight: Number(row?.inFlight ?? 0),
     periodStart,
   };
-}
-
-/** Runs a workspace started this period, for the rate limit. */
-export async function runsStartedSince(
-  workspaceId: string,
-  since: Date,
-): Promise<number> {
-  const [row] = await db
-    .select({ count: sql<string>`count(*)` })
-    .from(runs)
-    .where(and(eq(runs.workspaceId, workspaceId), gte(runs.queuedAt, since)));
-
-  return Number(row?.count ?? 0);
 }

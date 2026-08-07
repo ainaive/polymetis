@@ -7,9 +7,21 @@ import { startRunForWorkspace, type StartRunInput } from "./start";
 
 type Captured = { runs: Record<string, unknown>[]; queue: Record<string, unknown>[] };
 
-/** Records the two inserts instead of performing them. */
-function stubDb(captured: Captured) {
+/**
+ * Records the two inserts instead of performing them, and answers the
+ * in-flight count the transaction re-checks under its lock.
+ */
+function stubDb(captured: Captured, liveRuns = 0) {
   const tx = {
+    select: () => ({
+      from: () => ({
+        // The workspace lock: .where().for("update")
+        where: (..._args: unknown[]) => {
+          const result = Promise.resolve([{ count: String(liveRuns) }]);
+          return Object.assign(result, { for: () => Promise.resolve([{ id: "ws_1" }]) });
+        },
+      }),
+    }),
     insert: (table: unknown) => ({
       values: (row: Record<string, unknown>) => {
         // The run row carries a status; the queue row is only a runId.
@@ -154,5 +166,23 @@ describe("startRunForWorkspace", () => {
 
     expect(result.ok).toBe(false);
     expect(c.runs).toHaveLength(0);
+  });
+});
+
+describe("the concurrency cap under contention", () => {
+  test("is re-checked inside the transaction, not only from the caller's count", async () => {
+    // The caller's usage says there is room; the database says there is not,
+    // because another request took the last slot in between. Reading the count
+    // outside the transaction is a read-then-write race, and the count that
+    // decides has to be the one written against.
+    const c = capture();
+    const result = await startRunForWorkspace(
+      stubDb(c, 3),
+      base({ usage: { usedTokens: 0, allowanceTokens: 20_000_000, inFlight: 0 } }),
+    );
+
+    expect(result).toEqual({ ok: false, errors: ["quota-concurrency"] });
+    expect(c.runs).toHaveLength(0);
+    expect(c.queue).toHaveLength(0);
   });
 });

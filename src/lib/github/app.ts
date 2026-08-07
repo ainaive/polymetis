@@ -132,46 +132,66 @@ export async function createInstallationToken(
   };
 }
 
-/** Repositories the installation can see, for the picker. */
+/** Pages to walk before giving up. 100 per page, so 5,000 repositories. */
+export const MAX_REPO_PAGES = 50;
+
+/**
+ * Repositories the installation can see, for the picker.
+ *
+ * Paginated: an installation on an organization can hold far more than a
+ * hundred repositories, and stopping at the first page silently hides the rest
+ * — the person sees a picker that simply lacks the repository they wanted, with
+ * nothing to indicate why.
+ */
 export async function listInstallationRepos(
   token: string,
   options: { baseUrl?: string } = {},
 ): Promise<InstallationRepo[]> {
   const { baseUrl = GITHUB_API } = options;
+  const all: InstallationRepo[] = [];
 
-  const response = await fetch(`${baseUrl}/installation/repositories?per_page=100`, {
-    headers: {
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "user-agent": "polymetis",
-      authorization: `Bearer ${token}`,
-    },
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!response.ok) {
-    throw new Error(`GitHub returned ${response.status} listing installation repos`);
-  }
-
-  const payload = (await response.json()) as { repositories?: unknown };
-  if (!Array.isArray(payload.repositories)) return [];
-
-  return payload.repositories.flatMap((repo) => {
-    const entry = repo as {
-      full_name?: unknown;
-      private?: unknown;
-      default_branch?: unknown;
-    };
-    if (typeof entry.full_name !== "string") return [];
-    return [
+  for (let page = 1; page <= MAX_REPO_PAGES; page++) {
+    const response = await fetch(
+      `${baseUrl}/installation/repositories?per_page=100&page=${page}`,
       {
+        headers: {
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28",
+          "user-agent": "polymetis",
+          authorization: `Bearer ${token}`,
+        },
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`GitHub returned ${response.status} listing installation repos`);
+    }
+
+    const payload = (await response.json()) as { repositories?: unknown };
+    if (!Array.isArray(payload.repositories)) break;
+
+    for (const repo of payload.repositories) {
+      const entry = repo as {
+        full_name?: unknown;
+        private?: unknown;
+        default_branch?: unknown;
+      };
+      if (typeof entry.full_name !== "string") continue;
+      all.push({
         fullName: entry.full_name,
         private: entry.private === true,
         defaultBranch:
           typeof entry.default_branch === "string" ? entry.default_branch : "main",
-      },
-    ];
-  });
+      });
+    }
+
+    // A short page is the last page. Stopping on it avoids one extra request
+    // per listing, which matters against a rate limit shared with the clones.
+    if (payload.repositories.length < 100) break;
+  }
+
+  return all;
 }
 
 /**

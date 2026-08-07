@@ -74,6 +74,7 @@ export default async function GithubSettingsPage({
               <DisconnectInstallationButton
                 installationId={installation.installationId}
                 label={t("disconnect")}
+                failedLabel={t("disconnectFailed")}
               />
             </div>
           </div>

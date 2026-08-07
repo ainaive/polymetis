@@ -62,7 +62,8 @@
     "hints": {
       "repo": "owner/name 或 GitHub 链接。目前仅支持公开仓库。",
       "issue": "GitHub 议题链接，其正文会在运行开始前读取。"
-    }
+    },
+    "requestFailed": "无法连接服务器，请检查网络后重试。"
   },
   "githubSettings": {
     "title": "GitHub",
@@ -81,7 +82,8 @@
     "errorNoCode": "GitHub 未授权此次连接。请在 App 上启用用户授权后重试。",
     "errorNotYours": "你在 GitHub 上无权访问该安装。",
     "errorAlreadyClaimed": "该安装已连接到其他工作区，请先在那里断开连接。",
-    "scopeNote": "Polymetis 仅申请仓库内容的读取权限，绝不会写入你的仓库；也不会存储仓库令牌——仅在运行需要时申请，并会在一小时内过期。"
+    "scopeNote": "Polymetis 仅申请仓库内容的读取权限，绝不会写入你的仓库；也不会存储仓库令牌——仅在运行需要时申请，并会在一小时内过期。",
+    "disconnectFailed": "断开连接失败。"
   },
   "home": {
     "tagline": "面向软件研发的 Agent 模板",

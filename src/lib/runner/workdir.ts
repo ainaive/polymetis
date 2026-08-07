@@ -168,11 +168,16 @@ export function cloneEnv(base: CloneEnv = process.env, token?: string): CloneEnv
   // container's environment goes through a file rather than -e.
   //
   // GIT_CONFIG_COUNT applies these as if they were -c, without persisting them.
-  env.GIT_CONFIG_COUNT = "1";
+  env.GIT_CONFIG_COUNT = "2";
   env.GIT_CONFIG_KEY_0 = "http.extraheader";
   env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${Buffer.from(
     `x-access-token:${token}`,
   ).toString("base64")}`;
+  // git follows the initial redirect by default, and an extraheader set this
+  // way would be sent to wherever it lands. The host check above decides where
+  // the credential may go; a redirect must not be able to overrule it.
+  env.GIT_CONFIG_KEY_1 = "http.followRedirects";
+  env.GIT_CONFIG_VALUE_1 = "false";
 
   return env;
 }
@@ -276,8 +281,17 @@ function runGit(args: string[], timeoutMs: number, token?: string): Promise<void
 }
 
 
-/** Remove a token from text that is about to be stored or displayed. */
+/**
+ * Remove a credential from text that is about to be stored or displayed.
+ *
+ * The raw token is not what git sees. cloneEnv sends
+ * `Authorization: Basic base64("x-access-token:" + token)`, so a stderr line
+ * echoing the header it was given contains the encoded form — which is
+ * reversible, and this message ends up on the run row and in the UI. Redacting
+ * only the raw token left the credential in plain sight.
+ */
 function redact(text: string, token?: string): string {
   if (!token) return text;
-  return text.split(token).join("[redacted]");
+  const encoded = Buffer.from(`x-access-token:${token}`).toString("base64");
+  return text.split(token).join("[redacted]").split(encoded).join("[redacted]");
 }

@@ -30,6 +30,7 @@ export type RunFormLabels = {
   quotaConcurrency: string;
   notSignedIn: string;
   unknownTemplate: string;
+  requestFailed: string;
   fields: Record<string, string>;
   hints: Record<string, string>;
 };
@@ -61,11 +62,17 @@ export function RunForm({
       submitted[field.name] = String(data.get(field.name) ?? "");
     }
 
-    const result: StartRunOutcome = await startRun(
-      locale,
-      template.versionId,
-      submitted,
-    );
+    let result: StartRunOutcome;
+    try {
+      result = await startRun(locale, template.versionId, submitted);
+    } catch {
+      // A server action can reject outright — a dropped connection, a deploy
+      // mid-request. Leaving `pending` set would disable the button with
+      // nothing said and no way back but a reload.
+      setErrors([labels.requestFailed]);
+      setPending(false);
+      return;
+    }
 
     if (!result.ok) {
       setErrors(result.errors.map((code: string) => translateError(code, labels)));

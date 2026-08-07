@@ -50,6 +50,12 @@ export const workspaceMembers = pgTable(
   (t) => [
     unique("workspaceMembers_workspace_user_uq").on(t.workspaceId, t.userId),
     index("workspaceMembers_userId_idx").on(t.userId),
+    // One owner membership per person. Provisioning checks for an existing one
+    // and then inserts, which is a read-then-write race: two concurrent
+    // sign-ups could both find none. The database is what actually decides,
+    // and without this the loser creates a second workspace that silently
+    // splits one person's runs across two tenants.
+    unique("workspaceMembers_owner_uq").on(t.userId, t.role),
   ],
 );
 

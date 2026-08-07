@@ -1,5 +1,7 @@
+import { and, eq, inArray, sql } from "drizzle-orm";
+
 import type { Db } from "@/db";
-import { runQueue, runs } from "@/db/schema";
+import { runQueue, runs, workspaces } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { classifyRepoSource } from "@/lib/runner/workdir";
 import {
@@ -73,7 +75,35 @@ export async function startRunForWorkspace(
   }
 
   const runId = newId("run");
+  let refused = false;
+
   await db.transaction(async (tx) => {
+    // Lock the workspace row, then re-count. Reading the in-flight total
+    // outside the transaction is a read-then-write race: two requests arriving
+    // together both see room for one more and both take it. Serializing on the
+    // workspace makes the count that decides the same one that was written
+    // against, and contention is per-workspace so it costs nothing globally.
+    await tx
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, input.workspaceId))
+      .for("update");
+
+    const [live] = await tx
+      .select({ count: sql<string>`count(*)` })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.workspaceId, input.workspaceId),
+          inArray(runs.status, ["queued", "running"]),
+        ),
+      );
+
+    if (Number(live?.count ?? 0) >= input.maxConcurrent) {
+      refused = true;
+      return;
+    }
+
     await tx.insert(runs).values({
       id: runId,
       workspaceId: input.workspaceId,
@@ -88,6 +118,8 @@ export async function startRunForWorkspace(
     // pick up, and it would sit queued forever.
     await tx.insert(runQueue).values({ runId });
   });
+
+  if (refused) return { ok: false, errors: ["quota-concurrency"] };
 
   return { ok: true, runId };
 }

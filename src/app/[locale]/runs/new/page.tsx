@@ -55,6 +55,7 @@ export default async function NewRunPage({
               quotaConcurrency: t("quotaConcurrency"),
               notSignedIn: t("notSignedIn"),
               unknownTemplate: t("unknownTemplate"),
+              requestFailed: t("requestFailed"),
               fields: {
                 repo: t("fields.repo"),
                 issue: t("fields.issue"),

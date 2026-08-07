@@ -49,21 +49,30 @@ export function AuthForm({
     const password = String(data.get("password") ?? "");
     const name = String(data.get("name") ?? "");
 
-    const result =
-      mode === "sign-up"
-        ? await authClient.signUp.email({ email, password, name })
-        : await authClient.signIn.email({ email, password });
+    try {
+      const result =
+        mode === "sign-up"
+          ? await authClient.signUp.email({ email, password, name })
+          : await authClient.signIn.email({ email, password });
 
-    if (result.error) {
-      // better-auth's message is the useful one — "invalid email or password",
-      // "user already exists". Falling back to our own only when it has none.
-      setError(result.error.message ?? labels.generic);
+      if (result.error) {
+        // better-auth's message is the useful one — "invalid email or password",
+        // "user already exists". Falling back to our own only when it has none.
+        setError(result.error.message ?? labels.generic);
+        setPending(false);
+        return;
+      }
+    } catch {
+      // A rejection, not an error result: the request never reached the server.
+      // Without this the button stays disabled with nothing said, and the only
+      // way out is a reload.
+      setError(labels.generic);
       setPending(false);
       return;
     }
 
-    // Not setPending(false): the push is about to unmount this, and clearing it
-    // first shows an enabled button for the frame before navigation.
+    // Not setPending(false) on success: the push is about to unmount this, and
+    // clearing it first shows an enabled button for the frame before navigation.
     router.push("/dashboard");
     router.refresh();
   }
@@ -118,11 +127,18 @@ export function AuthForm({
             type="button"
             variant="outline"
             disabled={pending}
-            onClick={() => {
+            onClick={async () => {
               setPending(true);
-              // Sign-in scopes only. Repository access is a separate consented
-              // step through the GitHub App (ADR-0002).
-              void authClient.signIn.social({ provider: "github" });
+              setError(null);
+              try {
+                // Sign-in scopes only. Repository access is a separate
+                // consented step through the GitHub App (ADR-0002).
+                await authClient.signIn.social({ provider: "github" });
+              } catch {
+                // On success this navigates away and the reset never runs.
+                setError(labels.generic);
+                setPending(false);
+              }
             }}
           >
             <GithubMark />

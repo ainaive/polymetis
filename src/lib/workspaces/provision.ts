@@ -51,32 +51,44 @@ export async function provisionPersonalWorkspace(
   db: Db,
   user: { id: string; email: string; name?: string | null },
 ): Promise<{ workspaceId: string; created: boolean }> {
-  return db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select({ workspaceId: workspaceMembers.workspaceId })
-      .from(workspaceMembers)
-      .where(
-        and(eq(workspaceMembers.userId, user.id), eq(workspaceMembers.role, "owner")),
-      )
-      .limit(1);
+  const existing = await ownerWorkspace(db, user.id);
+  if (existing) return { workspaceId: existing, created: false };
 
-    if (existing) return { workspaceId: existing.workspaceId, created: false };
-
-    const workspaceId = newId("ws");
-    await tx.insert(workspaces).values({
-      id: workspaceId,
-      slug: workspaceSlug(user),
-      name: workspaceName(user),
+  try {
+    return await db.transaction(async (tx) => {
+      const workspaceId = newId("ws");
+      await tx.insert(workspaces).values({
+        id: workspaceId,
+        slug: workspaceSlug(user),
+        name: workspaceName(user),
+      });
+      await tx.insert(workspaceMembers).values({
+        id: newId("wsm"),
+        workspaceId,
+        userId: user.id,
+        role: "owner",
+      });
+      return { workspaceId, created: true };
     });
-    await tx.insert(workspaceMembers).values({
-      id: newId("wsm"),
-      workspaceId,
-      userId: user.id,
-      role: "owner",
-    });
+  } catch (error) {
+    // Checking then inserting is a read-then-write race: two concurrent calls
+    // can both find no membership. The unique constraint on (userId, role) is
+    // what actually decides, so the loser reads the winner's workspace rather
+    // than failing a sign-up over a race it was designed to tolerate.
+    const raced = await ownerWorkspace(db, user.id);
+    if (raced) return { workspaceId: raced, created: false };
+    throw error;
+  }
+}
 
-    return { workspaceId, created: true };
-  });
+async function ownerWorkspace(db: Db, userId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ workspaceId: workspaceMembers.workspaceId })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.userId, userId), eq(workspaceMembers.role, "owner")))
+    .limit(1);
+
+  return row?.workspaceId ?? null;
 }
 
 /** The workspace a viewer acts in. One per person in v1; the schema allows more. */

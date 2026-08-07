@@ -62,7 +62,8 @@
     "hints": {
       "repo": "owner/name, or a GitHub URL. Public repositories only for now.",
       "issue": "A GitHub issue URL. Its text is read before the run starts."
-    }
+    },
+    "requestFailed": "Could not reach the server. Check your connection and try again."
   },
   "githubSettings": {
     "title": "GitHub",
@@ -81,7 +82,8 @@
     "errorNoCode": "GitHub did not authorize the connection. Enable user authorization on the App, then try again.",
     "errorNotYours": "You do not have access to that installation on GitHub.",
     "errorAlreadyClaimed": "That installation is already connected to another workspace. Disconnect it there first.",
-    "scopeNote": "Polymetis asks for read access to repository contents only. It never writes to your repositories, and no repository token is stored — one is requested when a run needs it and expires within the hour."
+    "scopeNote": "Polymetis asks for read access to repository contents only. It never writes to your repositories, and no repository token is stored — one is requested when a run needs it and expires within the hour.",
+    "disconnectFailed": "Could not disconnect."
   },
   "home": {
     "tagline": "Agent templates for software R&D",

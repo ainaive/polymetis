@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 
 import { db, type DbClient } from "@/db";
 import { templateI18n, templateVersions, templates } from "@/db/schema";
@@ -74,9 +74,13 @@ export async function listStartableTemplates(
         eq(templateI18n.locale, locale),
       ),
     )
-    // First-party templates only: workspaceId is null for those, and
-    // user-authored ones arrive after v1.
-    .where(and(isNotNull(templateVersions.publishedAt)))
+    // First-party and published. The workspaceId check is not decoration: it
+    // is null only for templates we authored, and without it the first
+    // user-authored published template would become startable by every
+    // workspace on the instance.
+    .where(
+      and(isNotNull(templateVersions.publishedAt), isNull(templates.workspaceId)),
+    )
     .orderBy(desc(templateVersions.version));
 
   // Highest published version per template, taking the first of each because

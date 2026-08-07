@@ -246,7 +246,7 @@ describe("a token for a private repository", () => {
 
   test("is sent as an Authorization header through git config", () => {
     const env = cloneEnv({ PATH: "/usr/bin" }, TOKEN);
-    expect(env.GIT_CONFIG_COUNT).toBe("1");
+    expect(env.GIT_CONFIG_COUNT).toBe("2");
     expect(env.GIT_CONFIG_KEY_0).toBe("http.extraheader");
 
     const value = env.GIT_CONFIG_VALUE_0!;
@@ -254,6 +254,15 @@ describe("a token for a private repository", () => {
     expect(
       Buffer.from(value.replace("Authorization: Basic ", ""), "base64").toString(),
     ).toBe(`x-access-token:${TOKEN}`);
+  });
+
+  test("does not follow redirects while carrying the header", () => {
+    // git follows the initial redirect by default, and the header would go
+    // wherever it lands — overruling the github.com-only check that decides
+    // where this credential may be sent at all.
+    const env = cloneEnv({ PATH: "/usr/bin" }, TOKEN);
+    expect(env.GIT_CONFIG_KEY_1).toBe("http.followRedirects");
+    expect(env.GIT_CONFIG_VALUE_1).toBe("false");
   });
 
   test("adds nothing when there is no token", () => {
@@ -301,3 +310,28 @@ function filesContaining(dir: string, needle: string): string[] {
   }
   return hits;
 }
+
+describe("redacting a clone failure", () => {
+  test("removes the encoded credential git actually sees", async () => {
+    // git never sees the raw token: it is sent as
+    // Authorization: Basic base64("x-access-token:" + token). A failure that
+    // echoes the header therefore carries the encoded form, which is
+    // reversible — and this message is stored on the run row and shown in the
+    // UI. Redacting only the raw token left the credential in plain sight.
+    const token = "ghs_secrettokenvalue";
+    const encoded = Buffer.from(`x-access-token:${token}`).toString("base64");
+    const root = mkdtempSync(join(tmpdir(), "polymetis-redact-"));
+
+    // A clone that fails, so the error path runs for real.
+    const error = await cloneInto(`file://${join(tmpdir(), "polymetis-absent")}`, {
+      runId: "run_redact",
+      root,
+      token,
+    }).catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).not.toContain(token);
+    expect(message).not.toContain(encoded);
+  });
+});

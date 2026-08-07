@@ -7,6 +7,7 @@ import {
   createInstallationToken,
   InstallationTokens,
   listInstallationRepos,
+  MAX_REPO_PAGES,
   normalizePrivateKey,
   signAppJwt,
   TOKEN_REFRESH_MARGIN_MS,
@@ -167,6 +168,38 @@ describe("listInstallationRepos", () => {
     ]);
   });
 
+  test("walks every page", async () => {
+    // An organization installation can hold far more than a hundred
+    // repositories, and stopping at page 1 hides the rest with nothing to
+    // indicate why.
+    const pages: Record<string, unknown[]> = {
+      "1": Array.from({ length: 100 }, (_, i) => ({ full_name: `o/r${i}` })),
+      "2": Array.from({ length: 30 }, (_, i) => ({ full_name: `o/p${i}` })),
+    };
+    const seen: string[] = [];
+    const baseUrl = await fakeGithub((req) => {
+      const page = new URL(req.url, "http://x").searchParams.get("page") ?? "1";
+      seen.push(page);
+      return { status: 200, body: { repositories: pages[page] ?? [] } };
+    });
+
+    const repos = await listInstallationRepos("ghs_abc", { baseUrl });
+    expect(repos).toHaveLength(130);
+    // Stops on the short page rather than asking for one more.
+    expect(seen).toEqual(["1", "2"]);
+  });
+
+  test("stops immediately when the first page is short", async () => {
+    let calls = 0;
+    const baseUrl = await fakeGithub(() => {
+      calls++;
+      return { status: 200, body: { repositories: [{ full_name: "o/r" }] } };
+    });
+
+    await listInstallationRepos("ghs_abc", { baseUrl });
+    expect(calls).toBe(1);
+  });
+
   test("skips entries without a name rather than failing the page", async () => {
     const baseUrl = await fakeGithub(() => ({
       status: 200,
@@ -234,4 +267,24 @@ describe("InstallationTokens", () => {
     expect(await tokens.get("111", NOW)).toBe("ghs_111");
     expect(await tokens.get("222", NOW)).toBe("ghs_222");
   });
+});
+
+describe("listInstallationRepos page bound", () => {
+  test("gives up rather than looping forever on a server that never shortens", async () => {
+    // A full page every time would otherwise be an unbounded loop against an
+    // API that is also rate-limiting our clones.
+    let calls = 0;
+    const baseUrl = await fakeGithub(() => {
+      calls++;
+      return {
+        status: 200,
+        body: {
+          repositories: Array.from({ length: 100 }, (_, i) => ({ full_name: `o/r${i}` })),
+        },
+      };
+    });
+
+    await listInstallationRepos("ghs_abc", { baseUrl });
+    expect(calls).toBe(MAX_REPO_PAGES);
+  }, 30_000);
 });

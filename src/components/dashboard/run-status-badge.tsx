@@ -26,8 +26,23 @@ export function RunStatusBadge({ status }: { status: string }) {
   );
 }
 
-const KNOWN = ["queued", "running", "succeeded", "failed", "cancelled", "timed_out"];
+const KNOWN = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "timed_out",
+] as const;
 
-function isKnown(status: string): boolean {
-  return KNOWN.includes(status);
+/**
+ * A type predicate, not a boolean.
+ *
+ * `status` arrives as a plain string from the database. Returning boolean
+ * leaves it a string at the call site, so next-intl's typed catalog cannot
+ * check the key — and a status added to the enum without a message would fail
+ * at runtime instead of in tsc.
+ */
+function isKnown(status: string): status is (typeof KNOWN)[number] {
+  return (KNOWN as readonly string[]).includes(status);
 }
