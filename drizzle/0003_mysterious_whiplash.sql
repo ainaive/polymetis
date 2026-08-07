@@ -1,0 +1,1 @@
+ALTER TABLE "workspaces" ADD COLUMN "monthlyTokenAllowance" integer DEFAULT 20000000 NOT NULL;

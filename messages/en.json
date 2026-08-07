@@ -7,7 +7,83 @@
     "gallery": "Gallery",
     "templates": "Templates",
     "signIn": "Sign in",
-    "dashboard": "Dashboard"
+    "dashboard": "Dashboard",
+    "signOut": "Sign out",
+    "settings": "Settings"
+  },
+  "auth": {
+    "signInTitle": "Sign in",
+    "signInSubtitle": "Run templates on your own repositories.",
+    "signUpTitle": "Create an account",
+    "signUpSubtitle": "Free while Polymetis is in development.",
+    "email": "Email",
+    "password": "Password",
+    "name": "Name",
+    "signInSubmit": "Sign in",
+    "signUpSubmit": "Create account",
+    "continueWithGithub": "Continue with GitHub",
+    "or": "or",
+    "haveAccount": "Already have an account?",
+    "noAccount": "No account yet?",
+    "genericError": "That did not work. Please try again."
+  },
+  "dashboard": {
+    "title": "Your runs",
+    "newRun": "New run",
+    "empty": "No runs yet. Start one to see it here.",
+    "tokens": "tokens",
+    "allowance": "{remaining} of {allowance} tokens left this month",
+    "status": {
+      "queued": "Queued",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "timed_out": "Timed out",
+      "unknown": "Unknown"
+    }
+  },
+  "newRun": {
+    "title": "New run",
+    "noTemplates": "No published templates yet. Run the seed script first.",
+    "submit": "Start run",
+    "submitting": "Queueing…",
+    "optional": "(optional)",
+    "errorHeading": "That run could not be started",
+    "quotaAllowance": "This workspace has used its token allowance for the month.",
+    "quotaConcurrency": "Too many runs in flight. Wait for one to finish, then try again.",
+    "notSignedIn": "Your session expired. Sign in again.",
+    "unknownTemplate": "That template is no longer available.",
+    "fields": {
+      "repo": "Repository",
+      "issue": "Issue",
+      "audience": "Audience"
+    },
+    "hints": {
+      "repo": "owner/name, or a GitHub URL. Public repositories only for now.",
+      "issue": "A GitHub issue URL. Its text is read before the run starts."
+    },
+    "requestFailed": "Could not reach the server. Check your connection and try again."
+  },
+  "githubSettings": {
+    "title": "GitHub",
+    "subtitle": "Connect a repository so runs can read it.",
+    "notConfigured": "The GitHub App is not configured on this server.",
+    "notConnected": "No GitHub account connected.",
+    "connect": "Connect GitHub",
+    "manage": "Manage on GitHub",
+    "disconnect": "Disconnect",
+    "connectedTo": "Connected to {account}.",
+    "connectedHint": "Runs can read the repositories you selected.",
+    "errorMissing": "GitHub did not send an installation. Try again from the App page.",
+    "errorFailed": "That installation could not be confirmed. Try connecting again.",
+    "errorNoState": "Start the connection from this page so we can verify it is you.",
+    "errorWrongUser": "That installation was started by a different account.",
+    "errorNoCode": "GitHub did not authorize the connection. Enable user authorization on the App, then try again.",
+    "errorNotYours": "You do not have access to that installation on GitHub.",
+    "errorAlreadyClaimed": "That installation is already connected to another workspace. Disconnect it there first.",
+    "scopeNote": "Polymetis asks for read access to repository contents only. It never writes to your repositories, and no repository token is stored — one is requested when a run needs it and expires within the hour.",
+    "disconnectFailed": "Could not disconnect."
   },
   "home": {
     "tagline": "Agent templates for software R&D",

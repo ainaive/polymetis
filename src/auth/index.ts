@@ -4,6 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/db";
 import { accounts, sessions, users, verifications } from "@/db/schema/auth";
 import { env, githubConfigured } from "@/env";
+import { provisionPersonalWorkspace } from "@/lib/workspaces/provision";
 
 export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
@@ -41,6 +42,23 @@ export const auth = betterAuth({
         },
       }
     : undefined,
+  databaseHooks: {
+    user: {
+      create: {
+        // Every account needs a workspace: runs, quota and templates all hang
+        // off one, so an account without it can do nothing. Doing this here
+        // rather than lazily on first use means there is exactly one place that
+        // creates tenancy, and it runs for GitHub sign-ups too.
+        after: async (user) => {
+          await provisionPersonalWorkspace(db, {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+          });
+        },
+      },
+    },
+  },
   user: {
     additionalFields: {
       locale: {

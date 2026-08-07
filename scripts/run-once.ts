@@ -81,9 +81,9 @@ await db.insert(runs).values({
   templateVersionId: version.id,
   inputs,
   status: "running",
-  // Same default as scripts/enqueue.ts: the issue text is stored verbatim in
-  // `inputs`, so publishing is a choice, not a default.
-  visibility: "private",
+  // Same default as scripts/enqueue.ts: unlisted, so the operator can open the
+  // replay by its link without the run being listed or published.
+  visibility: "unlisted",
   startedAt: new Date(),
 });
 

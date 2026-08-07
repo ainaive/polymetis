@@ -28,6 +28,24 @@ const schema = z.object({
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
 
+  // The GitHub App used for repository access (ADR-0002 chose it over classic
+  // OAuth scopes, which grant write to every private repo). Separate from the
+  // sign-in provider above: signing in and granting repository access are two
+  // consented steps, and one must not imply the other.
+  GITHUB_APP_ID: z.string().optional(),
+  /** The App's URL slug, for building its installation link. */
+  GITHUB_APP_SLUG: z.string().optional(),
+  /** PEM from the App's settings. Escaped newlines are normalized on use. */
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  /**
+   * The App's OAuth client, used during installation to prove the person
+   * connecting can administer the installation they named. Without it the
+   * callback cannot tell connecting an account from taking one over, so the App
+   * counts as unconfigured rather than partly working.
+   */
+  GITHUB_APP_CLIENT_ID: z.string().optional(),
+  GITHUB_APP_CLIENT_SECRET: z.string().optional(),
+
   // Agent runtime (M2). Absent means runs cannot be executed; the gallery and
   // replay of already-recorded runs still work, because replay reads our own
   // event log rather than calling any model.
@@ -63,6 +81,11 @@ const schema = z.object({
 
   // Worker identity and liveness. A run whose heartbeat goes stale for longer
   // than the reaper's threshold is requeued (see ADR-0001).
+  // Runs a workspace may have queued or running at once. The token allowance
+  // is summed from settled runs, so it cannot see work still in flight; this is
+  // what stops a workspace starting twenty at once and blowing past the month.
+  WORKSPACE_MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(3),
+
   WORKER_ID: z.string().optional(),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   WORKER_HEARTBEAT_SECONDS: z.coerce.number().int().positive().default(15),
@@ -124,7 +147,62 @@ export const env: Env = {
 /** Whether a real agent run can be executed in this process. */
 export const canExecuteRuns = Boolean(parsed.ANTHROPIC_API_KEY);
 
-/** Whether GitHub sign-in and repo access are configured. */
+/** Whether GitHub sign-in is configured. Sign-in scopes only (ADR-0002). */
 export const githubConfigured = Boolean(
   parsed.GITHUB_CLIENT_ID && parsed.GITHUB_CLIENT_SECRET,
 );
+
+/**
+ * Whether the GitHub App is configured, which is what grants repository access.
+ *
+ * Separate from sign-in on purpose: an install requires all three of these, and
+ * a half-configured App fails at the point of use with an error about a missing
+ * key rather than being absent from the UI in the first place.
+ */
+export const githubAppConfigured = Boolean(
+  parsed.GITHUB_APP_ID &&
+    parsed.GITHUB_APP_SLUG &&
+    parsed.GITHUB_APP_PRIVATE_KEY &&
+    parsed.GITHUB_APP_CLIENT_ID &&
+    parsed.GITHUB_APP_CLIENT_SECRET,
+);
+
+/**
+ * The App's credentials, or a refusal that names what is missing.
+ *
+ * Throwing here rather than returning undefined means a code path that needs
+ * the App cannot quietly continue without it.
+ */
+export function requireGithubApp(): {
+  appId: string;
+  privateKey: string;
+  slug: string;
+  clientId: string;
+  clientSecret: string;
+} {
+  const missing = (
+    [
+      ["GITHUB_APP_ID", parsed.GITHUB_APP_ID],
+      ["GITHUB_APP_SLUG", parsed.GITHUB_APP_SLUG],
+      ["GITHUB_APP_PRIVATE_KEY", parsed.GITHUB_APP_PRIVATE_KEY],
+      ["GITHUB_APP_CLIENT_ID", parsed.GITHUB_APP_CLIENT_ID],
+      ["GITHUB_APP_CLIENT_SECRET", parsed.GITHUB_APP_CLIENT_SECRET],
+    ] as const
+  )
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+
+  if (missing.length > 0) {
+    throw new Error(
+      `GitHub App is not configured: set ${missing.join(", ")}. Register an App with contents:read and metadata:read, enable "Request user authorization (OAuth) during installation", then copy its id, slug, private key and OAuth client credentials.`,
+    );
+  }
+
+  return {
+    appId: parsed.GITHUB_APP_ID!,
+    slug: parsed.GITHUB_APP_SLUG!,
+    privateKey: parsed.GITHUB_APP_PRIVATE_KEY!,
+    clientId: parsed.GITHUB_APP_CLIENT_ID!,
+    clientSecret: parsed.GITHUB_APP_CLIENT_SECRET!,
+  };
+}

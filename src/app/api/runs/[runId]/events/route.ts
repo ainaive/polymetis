@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 
+import { currentViewer } from "@/auth/viewer";
 import { db } from "@/db";
 import { runs } from "@/db/schema";
 import {
@@ -12,6 +13,7 @@ import {
   sseFrame,
 } from "@/lib/events/sse";
 import { readEvents } from "@/lib/events/store";
+import { canViewRun } from "@/lib/runs/access";
 
 /**
  * Streams a run's events as they are appended.
@@ -34,19 +36,21 @@ export async function GET(
   const { runId } = await ctx.params;
 
   const [run] = await db
-    .select({ status: runs.status })
+    .select({
+      status: runs.status,
+      visibility: runs.visibility,
+      workspaceId: runs.workspaceId,
+    })
     .from(runs)
     .where(eq(runs.id, runId))
     .limit(1);
 
-  // Visibility is deliberately not checked here, because the replay page does
-  // not check it either: today every run is reachable by id, and there are no
-  // user-owned runs yet. Both gates land together with accounts in M3b — one
-  // of them enforcing early would only make the live view and the replay
-  // disagree about who may read the same run.
-  if (!run) {
-    // No body: EventSource reports the status, and any text here would be
-    // user-facing copy living outside the message catalogs.
+  // The same predicate the replay page uses. If these two disagreed, the one
+  // that allows more would be a way around the one that allows less — and a
+  // live stream of a private run is the more revealing of the two.
+  if (!run || !canViewRun(run, await currentViewer())) {
+    // 404 rather than 403, and no body: whether a run exists is information,
+    // and EventSource reports the status on its own.
     return new Response(null, { status: 404 });
   }
 

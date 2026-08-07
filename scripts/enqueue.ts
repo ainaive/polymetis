@@ -71,10 +71,12 @@ await db.transaction(async (tx) => {
       audience: "engineer",
     },
     status: "queued",
-    // Private unless asked for. `inputs` stores the issue text verbatim, and
-    // publishing someone's issue because a script defaulted that way is not a
-    // mistake they can take back.
-    visibility: isPublic ? "public" : "private",
+    // Unlisted unless asked otherwise: reachable by its link, listed nowhere.
+    // Not private, because a private run needs an owning workspace to be
+    // readable at all and a script has no session to belong to — and not
+    // public, because `inputs` stores the issue text verbatim and publishing
+    // someone's issue by default is not a mistake they can take back.
+    visibility: isPublic ? "public" : "unlisted",
   });
   // Same transaction: a run row with no queue row is a run nothing will ever
   // pick up, and it would sit as "queued" forever.
@@ -83,7 +85,7 @@ await db.transaction(async (tx) => {
 
 console.log(`queued ${runId}`);
 console.log(`repo   ${repo}`);
-console.log(`visible ${isPublic ? "public" : "private"}`);
+console.log(`visible ${isPublic ? "public" : "unlisted"}`);
 console.log(`watch  /en/runs/${runId}`);
 
 process.exit(0);

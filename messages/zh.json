@@ -7,7 +7,83 @@
     "gallery": "案例库",
     "templates": "模板",
     "signIn": "登录",
-    "dashboard": "工作台"
+    "dashboard": "工作台",
+    "signOut": "退出登录",
+    "settings": "设置"
+  },
+  "auth": {
+    "signInTitle": "登录",
+    "signInSubtitle": "在你自己的仓库上运行模板。",
+    "signUpTitle": "创建账户",
+    "signUpSubtitle": "Polymetis 开发期间免费使用。",
+    "email": "邮箱",
+    "password": "密码",
+    "name": "姓名",
+    "signInSubmit": "登录",
+    "signUpSubmit": "创建账户",
+    "continueWithGithub": "使用 GitHub 继续",
+    "or": "或",
+    "haveAccount": "已经有账户？",
+    "noAccount": "还没有账户？",
+    "genericError": "操作未成功，请重试。"
+  },
+  "dashboard": {
+    "title": "你的运行",
+    "newRun": "新建运行",
+    "empty": "还没有运行记录。创建一个即可在此查看。",
+    "tokens": "tokens",
+    "allowance": "本月剩余 {remaining} / {allowance} tokens",
+    "status": {
+      "queued": "排队中",
+      "running": "运行中",
+      "succeeded": "已成功",
+      "failed": "已失败",
+      "cancelled": "已取消",
+      "timed_out": "已超时",
+      "unknown": "未知"
+    }
+  },
+  "newRun": {
+    "title": "新建运行",
+    "noTemplates": "还没有已发布的模板，请先运行种子脚本。",
+    "submit": "开始运行",
+    "submitting": "正在排队…",
+    "optional": "（可选）",
+    "errorHeading": "无法开始此次运行",
+    "quotaAllowance": "该工作区本月的 token 额度已用完。",
+    "quotaConcurrency": "同时进行的运行过多，请等待其中一个结束后重试。",
+    "notSignedIn": "登录状态已过期，请重新登录。",
+    "unknownTemplate": "该模板已不可用。",
+    "fields": {
+      "repo": "仓库",
+      "issue": "议题",
+      "audience": "读者"
+    },
+    "hints": {
+      "repo": "owner/name 或 GitHub 链接。目前仅支持公开仓库。",
+      "issue": "GitHub 议题链接，其正文会在运行开始前读取。"
+    },
+    "requestFailed": "无法连接服务器，请检查网络后重试。"
+  },
+  "githubSettings": {
+    "title": "GitHub",
+    "subtitle": "连接仓库，运行才能读取它。",
+    "notConfigured": "此服务器尚未配置 GitHub App。",
+    "notConnected": "尚未连接 GitHub 账户。",
+    "connect": "连接 GitHub",
+    "manage": "在 GitHub 上管理",
+    "disconnect": "断开连接",
+    "connectedTo": "已连接到 {account}。",
+    "connectedHint": "运行可以读取你所选择的仓库。",
+    "errorMissing": "GitHub 未返回安装信息，请从 App 页面重试。",
+    "errorFailed": "无法确认该安装，请重新连接。",
+    "errorNoState": "请从本页面发起连接，以便我们验证身份。",
+    "errorWrongUser": "该安装由另一个账户发起。",
+    "errorNoCode": "GitHub 未授权此次连接。请在 App 上启用用户授权后重试。",
+    "errorNotYours": "你在 GitHub 上无权访问该安装。",
+    "errorAlreadyClaimed": "该安装已连接到其他工作区，请先在那里断开连接。",
+    "scopeNote": "Polymetis 仅申请仓库内容的读取权限，绝不会写入你的仓库；也不会存储仓库令牌——仅在运行需要时申请，并会在一小时内过期。",
+    "disconnectFailed": "断开连接失败。"
   },
   "home": {
     "tagline": "面向软件研发的 Agent 模板",

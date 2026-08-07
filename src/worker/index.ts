@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { loadRunnableTemplate } from "@/db/queries/templates";
-import { env } from "@/env";
+import { env, githubAppConfigured, requireGithubApp } from "@/env";
 import {
   claimNext,
   heartbeat,
@@ -8,9 +8,13 @@ import {
   reapStale,
   type ClaimedRun,
 } from "@/lib/queue/claim";
+import { installationForWorkspace } from "@/db/queries/github";
+import { InstallationTokens } from "@/lib/github/app";
+import { fetchIssue } from "@/lib/github/issue";
 import { executeRun } from "@/lib/runner/execute";
 import { settleRun } from "@/lib/runner/settle";
 import { prepareWorkdir, type PreparedWorkdir } from "@/lib/runner/workdir";
+import { parseIssueRef } from "@/lib/templates/contract";
 
 /**
  * Worker entrypoint. Runs directly under Bun (`bun run worker`), outside
@@ -37,6 +41,8 @@ type InFlight = {
 };
 
 const inFlight = new Map<string, InFlight>();
+/** Lazily built, so a worker with no App configured never touches its config. */
+let tokens: InstallationTokens | undefined;
 let shuttingDown = false;
 
 /**
@@ -51,6 +57,62 @@ const proxyPort = env.WORKER_CONCURRENCY === 1 ? env.SANDBOX_PROXY_PORT : 0;
 
 function log(message: string) {
   console.log(`[worker ${workerId}] ${message}`);
+}
+
+/**
+ * The issue the agent is given.
+ *
+ * Two callers write `inputs.issue` differently and both are legitimate: the
+ * browser form stores a GitHub issue URL, because that is what the template
+ * contract declares and what a person has to hand; scripts/enqueue.ts stores
+ * the text itself, because a local issue file has no URL. Fetching happens on
+ * the host either way — egress is default-deny inside the sandbox, so an agent
+ * handed a URL would have no way to read it (ADR-0002).
+ */
+/**
+ * A short-lived installation token, or undefined.
+ *
+ * Minted per run rather than stored (ADR-0004): a token in the database is the
+ * long-lived repository credential the App was chosen to avoid, and this one
+ * expires within the hour anyway.
+ */
+async function installationTokenFor(
+  workspaceId: string | null,
+  repo: string,
+): Promise<string | undefined> {
+  if (!workspaceId) return undefined;
+  if (!githubAppConfigured) return undefined;
+  // Only github.com. The header would be sent to whatever host the URL names,
+  // and handing a GitHub credential to an unrelated server is the kind of
+  // mistake that is obvious only afterwards.
+  if (!/^https:\/\/github\.com\//i.test(repo)) return undefined;
+
+  const installationId = await installationForWorkspace(db, workspaceId);
+  if (!installationId) return undefined;
+
+  tokens ??= new InstallationTokens(requireGithubApp());
+  try {
+    return await tokens.get(installationId);
+  } catch (error) {
+    // Not fatal on its own: a public repository still clones without it, and
+    // failing here would turn "the App was uninstalled" into every run failing.
+    log(`could not mint an installation token for ${workspaceId}: ${error}`);
+    return undefined;
+  }
+}
+
+async function resolveIssue(input: string | undefined, token?: string): Promise<{
+  text: string;
+  ref?: { owner: string; name: string; number: number; title: string };
+}> {
+  const value = input?.trim() ?? "";
+  if (value === "") return { text: "" };
+
+  const ref = parseIssueRef(value);
+  if (!ref) return { text: value };
+
+  const fetched = await fetchIssue(ref, token ? { token } : {});
+  return { text: fetched.text, ref: { ...ref, title: fetched.title } };
 }
 
 async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> {
@@ -83,14 +145,22 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
     const repo = claim.inputs.repo;
     if (!repo) throw new Error("run has no repo input");
 
-    workdir = await prepareWorkdir({ runId: claim.runId, repo });
+    // A token only when this workspace has connected an installation and the
+    // repository is on github.com. Public repositories need none, and sending
+    // one we do not need is the only way that request can fail.
+    const token = await installationTokenFor(claim.workspaceId, repo);
+
+    workdir = await prepareWorkdir({ runId: claim.runId, repo, token });
+
+    const issue = await resolveIssue(claim.inputs.issue, token);
 
     const result = await executeRun(db, {
       runId: claim.runId,
       workdir: workdir.path,
       template,
       inputs: claim.inputs,
-      issue: claim.inputs.issue ?? "",
+      issue: issue.text,
+      ...(issue.ref ? { issueRef: issue.ref } : {}),
       abortController: abort,
       proxyPort,
     });

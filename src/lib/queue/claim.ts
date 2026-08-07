@@ -22,6 +22,8 @@ export type ClaimedRun = {
   attempts: number;
   templateVersionId: string;
   inputs: Record<string, string>;
+  /** Null for runs created by the CLI scripts, which have no workspace. */
+  workspaceId: string | null;
 };
 
 /**
@@ -71,6 +73,7 @@ export async function claimNext(
       .returning({
         templateVersionId: runs.templateVersionId,
         inputs: runs.inputs,
+        workspaceId: runs.workspaceId,
       });
 
     if (!run) {
@@ -94,6 +97,7 @@ export async function claimNext(
       attempts: Number(row.attempts),
       templateVersionId: run.templateVersionId,
       inputs: run.inputs,
+      workspaceId: run.workspaceId,
     };
   });
 }

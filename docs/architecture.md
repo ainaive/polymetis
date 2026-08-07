@@ -96,8 +96,8 @@ docs/adr/           decisions and their rationale
 | M0 | Scaffold, conventions, check gate, ADRs | done |
 | M1 | Schema, event log, golden-run fixture, replay player, gallery | done |
 | M2 | Sandbox, agent driver, credential proxy, first template | done |
-| M3a | Queue claim, worker loop, settle, live SSE, tail view | in progress |
-| M3b | Accounts, GitHub connect, dashboard, quota | |
+| M3a | Queue claim, worker loop, settle, live SSE, tail view | done |
+| M3b | Accounts, access control, dashboard, run form, quota, GitHub App | in progress |
 | M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | |
 | M5 | Egress allowlist, cost ceilings, retention | |
 
@@ -112,11 +112,20 @@ M1 deliberately builds the gallery and replay player against a hand-authored
 fixture with no runtime at all: it makes the event schema prove itself before
 anything depends on it, and lets all UI work proceed at zero token cost.
 
-**Public repositories only until M3b.** The worker clones on the host and
-bind-mounts the result (ADR-0002), with the operator's git credentials
-deliberately stripped from the clone environment — so a private repository fails
-loudly rather than succeeding with the wrong identity. Private access needs the
-user's own consented GitHub token, which is M3b.
+**Private repositories go through a GitHub App** (ADR-0004), which is built but
+**not yet registered** — see issue #5 for the registration steps and what to
+verify once it exists. Public repositories are unaffected. The worker clones
+on the host and bind-mounts the result (ADR-0002), with the operator's git
+credentials stripped from the clone environment, so a repository is reachable
+only through a credential the workspace consented to. That credential is a
+short-lived installation token passed as an HTTP header through the environment
+— never in the remote URL, which git would persist into the bind-mounted
+`.git/config`, and never in argv, which `ps` exposes.
+
+**A run belongs to a workspace.** `visibility` is enforced by one predicate used
+by both the replay page and the SSE stream; private fails closed, and the CLI
+scripts create `unlisted` runs because an operator has no session to be a member
+of.
 
 **M2 carries the product risk.** If issue + repo → spec does not produce
 something a senior engineer says saved them real time, no amount of gallery
