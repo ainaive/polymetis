@@ -12,15 +12,16 @@ import { db } from "@/db";
 import { runQueue, runs, templateVersions, templates } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { classifyRepoSource } from "@/lib/runner/workdir";
+import { parseIssueRef } from "@/lib/templates/contract";
 import { ISSUE_TO_SPEC_SLUG } from "@/lib/templates/issue-to-spec";
 
 const args = process.argv.slice(2).filter((arg) => arg !== "--public");
 const isPublic = process.argv.includes("--public");
 const repo = args[0];
-const issuePath = args[1];
+const issueArg = args[1];
 if (!repo) {
   console.error(
-    "usage: bun run scripts/enqueue.ts <repo-url|path> [issue-file] [--public]",
+    "usage: bun run scripts/enqueue.ts <repo-url|path> [issue-url|issue-file] [--public]",
   );
   process.exit(1);
 }
@@ -29,9 +30,16 @@ if (!repo) {
 // the terminal you typed into, not a failed run someone has to go read.
 classifyRepoSource(repo);
 
-const issue = issuePath
-  ? await Bun.file(issuePath).text()
-  : `Title: Support deployment without a long-running worker process
+// A GitHub issue URL is stored as-is: the worker fetches its text on the host
+// before the run starts, the same way a run created from the browser works.
+// Anything else is read as a file of issue text, which is how a local issue
+// with no URL gets in.
+const issueRef = issueArg ? parseIssueRef(issueArg) : null;
+const issue = issueRef
+  ? issueArg!
+  : issueArg
+    ? await Bun.file(issueArg).text()
+    : `Title: Support deployment without a long-running worker process
 
 The scheduler currently needs a separate always-on worker process. That rules
 out hosting platforms that cannot keep a process alive and only offer scheduled
@@ -67,7 +75,7 @@ await db.transaction(async (tx) => {
     inputs: {
       repo,
       issue,
-      issueSource: issuePath ?? "(built-in sample)",
+      issueSource: issueArg ?? "(built-in sample)",
       audience: "engineer",
     },
     status: "queued",

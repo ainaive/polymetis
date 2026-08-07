@@ -97,8 +97,8 @@ docs/adr/           decisions and their rationale
 | M1 | Schema, event log, golden-run fixture, replay player, gallery | done |
 | M2 | Sandbox, agent driver, credential proxy, first template | done |
 | M3a | Queue claim, worker loop, settle, live SSE, tail view | done |
-| M3b | Accounts, access control, dashboard, run form, quota, GitHub App | in progress |
-| M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | |
+| M3b | Accounts, access control, dashboard, run form, quota, GitHub App | done |
+| M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | in progress |
 | M5 | Egress allowlist, cost ceilings, retention | |
 
 M2 was split because its second half — the worker and live SSE — is what makes a
@@ -108,9 +108,12 @@ A minimal reaper landed with M3a rather than M5: without one, a worker killed
 mid-run leaves that run `running` forever with nothing driving it. M5 still owns
 the policy around it.
 
-M1 deliberately builds the gallery and replay player against a hand-authored
-fixture with no runtime at all: it makes the event schema prove itself before
-anything depends on it, and lets all UI work proceed at zero token cost.
+M1 deliberately built the gallery and replay player against a hand-authored
+fixture with no runtime at all: it made the event schema prove itself before
+anything depended on it, and let all UI work proceed at zero token cost. **M4
+retired that fixture from the gallery.** It served its purpose and still drives
+the player's unit tests, but the homepage claims these replays are real, and one
+of them was not. See `docs/gallery.md` for how runs get there now.
 
 **Private repositories go through a GitHub App** (ADR-0004), which is built but
 **not yet registered** — see issue #5 for the registration steps and what to

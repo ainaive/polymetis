@@ -1,4 +1,4 @@
-import { getTranslations, setRequestLocale } from "next-intl/server";
+import { getFormatter, getTranslations, setRequestLocale } from "next-intl/server";
 
 import { TemplateCard } from "@/components/gallery/template-card";
 import { listGallery } from "@/db/queries/runs";
@@ -25,8 +25,23 @@ export default async function HomePage({
   const { locale } = await params;
   setRequestLocale(locale);
 
-  const t = await getTranslations("home");
-  const entries = await listGallery(locale);
+  const [t, format, entries] = await Promise.all([
+    getTranslations("home"),
+    getFormatter(),
+    listGallery(locale),
+  ]);
+
+  // Computed from the curated set rather than asserted. If the gallery is
+  // small, the line says so — a claim the page cannot back is worse than no
+  // claim, and this is the page making the claim.
+  const totals = entries.reduce(
+    (sum, entry) => ({
+      runs: sum.runs + 1,
+      events: sum.events + entry.eventCount,
+      tokens: sum.tokens + entry.totalTokens,
+    }),
+    { runs: 0, events: 0, tokens: 0 },
+  );
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-16 sm:py-24">
@@ -40,6 +55,29 @@ export default async function HomePage({
         <p className="text-muted-foreground mt-4 max-w-2xl text-lg text-pretty">
           {t("subhead")}
         </p>
+
+        {totals.runs > 0 ? (
+          <dl className="text-muted-foreground mt-6 flex flex-wrap gap-x-8 gap-y-2 text-sm">
+            <div className="flex items-baseline gap-1.5">
+              <dt className="text-foreground font-mono font-medium tabular-nums">
+                {format.number(totals.runs)}
+              </dt>
+              <dd>{t("statRuns", { count: totals.runs })}</dd>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <dt className="text-foreground font-mono font-medium tabular-nums">
+                {format.number(totals.events)}
+              </dt>
+              <dd>{t("statEvents", { count: totals.events })}</dd>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <dt className="text-foreground font-mono font-medium tabular-nums">
+                {format.number(totals.tokens)}
+              </dt>
+              <dd>{t("statTokens")}</dd>
+            </div>
+          </dl>
+        ) : null}
       </section>
 
       <section className="mt-14">
@@ -60,7 +98,6 @@ export default async function HomePage({
                 labels={{
                   watchReplay: t("watchReplay"),
                   runIt: t("runOnMyRepo"),
-                  runItSoon: t("runOnMyRepoSoon"),
                   events: t("events"),
                 }}
               />

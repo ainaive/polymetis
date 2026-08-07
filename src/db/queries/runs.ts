@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -122,9 +122,14 @@ export type GalleryEntry = {
   title: string;
   summary: string;
   repo: string | null;
+  /** owner/name#123, when the run recorded which issue it read. */
+  issue: string | null;
   durationMs: number;
   costUsd: string;
   eventCount: number;
+  totalTokens: number;
+  /** Opening lines of the deliverable — the output, not more metadata. */
+  preview: string | null;
 };
 
 /**
@@ -142,6 +147,27 @@ export async function listGallery(
       template: templates,
       title: templateI18n.title,
       summary: templateI18n.summary,
+      // A correlated subquery, not a join. runArtifacts is unique on
+      // (runId, path), so a run may hold several — and a join would then emit
+      // one card per artifact, duplicating entries, inflating the hero totals,
+      // and pushing later runs out past the limit. Which one is not arbitrary
+      // either: it is the file the template version contracted for.
+      artifact: sql<string | null>`(
+        select a."content" from "runArtifacts" a
+        where a."runId" = "runs"."id"
+          and a."path" = "templateVersions"."deliverable"->>'filename'
+        limit 1
+      )`,
+      // Counted in SQL rather than by reading the log. Loading every event of
+      // every card to call .length on it costs hundreds of rows per run for a
+      // number the database already knows.
+      //
+      // "runs"."id" is spelled out: in a select-list template drizzle renders
+      // ${runs.id} as a bare "id", which binds to the subquery's own column and
+      // silently counts nothing.
+      eventCount: sql<string>`(
+        select count(*) from "runEvents" e where e."runId" = "runs"."id"
+      )`,
     })
     .from(runs)
     .innerJoin(templateVersions, eq(runs.templateVersionId, templateVersions.id))
@@ -159,15 +185,22 @@ export async function listGallery(
 
   return Promise.all(
     rows.map(async (row) => {
-      const events = await readEvents(db, row.run.id);
+      // Only the opening event, for what the run was pointed at. That is a
+      // recorded fact rather than a re-derivation from inputs, and it is one
+      // row instead of the whole log.
+      const [start] = await readEvents(db, row.run.id, { limit: 1 });
       const durationMs =
         row.run.startedAt && row.run.endedAt
           ? row.run.endedAt.getTime() - row.run.startedAt.getTime()
           : 0;
-      const start = events[0];
+
       const repo =
         start?.type === "run.start" && start.payload.repo
           ? `${start.payload.repo.owner}/${start.payload.repo.name}`
+          : displayRepo(row.run.inputs.repo);
+      const issue =
+        start?.type === "run.start" && start.payload.issue
+          ? `${start.payload.issue.owner}/${start.payload.issue.name}#${start.payload.issue.number}`
           : null;
 
       return {
@@ -177,10 +210,50 @@ export async function listGallery(
         title: row.title ?? row.template.slug,
         summary: row.summary ?? "",
         repo,
+        issue,
         durationMs,
         costUsd: row.run.costUsd,
-        eventCount: events.length,
+        eventCount: Number(row.eventCount),
+        totalTokens:
+          row.run.inputTokens +
+          row.run.outputTokens +
+          row.run.cacheReadTokens +
+          row.run.cacheCreationTokens,
+        preview: previewOf(row.artifact),
       };
     }),
   );
+}
+
+/** `https://github.com/o/r.git` reads better on a card as `o/r`. */
+function displayRepo(repo: string | undefined): string | null {
+  if (!repo) return null;
+  const match = /github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(repo);
+  return match ? `${match[1]}/${match[2]}` : repo;
+}
+
+/** How much of the deliverable a card shows. Enough to judge, not to read. */
+const PREVIEW_CHARS = 260;
+
+/**
+ * The opening prose of a deliverable.
+ *
+ * Markdown headings and blank lines are dropped so the preview starts on a
+ * sentence: "# Implementation spec" tells a visitor nothing they cannot already
+ * see from the card's title.
+ */
+function previewOf(content: string | null): string | null {
+  if (!content) return null;
+
+  const prose = content
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !line.startsWith("#"))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (prose === "") return null;
+  return prose.length > PREVIEW_CHARS
+    ? `${prose.slice(0, PREVIEW_CHARS).trimEnd()}…`
+    : prose;
 }

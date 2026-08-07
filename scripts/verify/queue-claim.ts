@@ -7,6 +7,19 @@
  * rather than leaving it running with nothing behind it. Run in CI.
  *
  *   DATABASE_URL=... bun run scripts/verify/queue-claim.ts
+ *
+ * **Run this against a database nothing else is using.** claimNext takes
+ * whatever row is next — that is its job — so beside real work this does not
+ * merely fail an assertion: it claims someone else's run, backdates its
+ * heartbeat, and reaps it until the attempt cap marks it failed. It destroyed a
+ * queued demo run exactly that way.
+ *
+ * Two mitigations, and it is worth being clear about what each does. A session
+ * advisory lock stops two copies of this verification colliding. A preflight
+ * count refuses to start when the queue already holds work. Neither closes the
+ * window: a run enqueued *after* the count still gets claimed, because nothing
+ * outside this file takes that lock. An isolated database is the only real
+ * guarantee, which is what CI uses.
  */
 import { eq, inArray, sql } from "drizzle-orm";
 
@@ -20,6 +33,9 @@ import {
   reapStale,
   releaseClaim,
 } from "@/lib/queue/claim";
+
+/** Arbitrary but fixed, so two runs of this script serialize against each other. */
+const ADVISORY_LOCK_KEY = 8_421_337;
 
 let failures = 0;
 
@@ -92,6 +108,32 @@ async function staleHeartbeat(runId: string, secondsAgo: number) {
 }
 
 async function main() {
+  // Serializes concurrent copies of this verification. Deliberately not taken
+  // by the worker or by enqueue: making production code acquire a lock for a
+  // test's benefit is a worse trade than an isolated database.
+  await db.execute(sql`select pg_advisory_lock(${ADVISORY_LOCK_KEY})`);
+
+  // A moment-in-time check, not a barrier. Anything enqueued after it is still
+  // fair game for claimNext below — see the note at the top of this file.
+  const [busy] = await db
+    .select({ count: sql<string>`count(*)` })
+    .from(runQueue)
+    .where(inArray(runQueue.state, ["pending", "claimed"]));
+
+  if (Number(busy?.count ?? 0) > 0) {
+    console.error(
+      `FAIL  the queue has ${busy?.count} row(s) pending or claimed — refusing to run.`,
+    );
+    console.error(
+      "      Stop the worker and let the queue drain first; this verification",
+    );
+    console.error(
+      "      claims and reaps whatever it finds, including real runs.",
+    );
+    failures++;
+    return;
+  }
+
   await setup();
 
   // --- two workers contending for the same queue ----------------------------

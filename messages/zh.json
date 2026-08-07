@@ -5,7 +5,6 @@
   },
   "nav": {
     "gallery": "案例库",
-    "templates": "模板",
     "signIn": "登录",
     "dashboard": "工作台",
     "signOut": "退出登录",
@@ -93,8 +92,10 @@
     "runOnMyRepo": "在我的仓库运行",
     "galleryHeading": "精选运行",
     "galleryEmpty": "还没有示例运行。执行 `bun run seed` 载入 golden run 固定数据。",
-    "runOnMyRepoSoon": "自己跑一次 — 即将开放",
-    "events": "个事件"
+    "events": "个事件",
+    "statRuns": "精选运行",
+    "statEvents": "记录事件",
+    "statTokens": "消耗 tokens"
   },
   "replay": {
     "backToGallery": "案例库",

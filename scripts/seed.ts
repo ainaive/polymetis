@@ -1,10 +1,11 @@
 /**
- * Seed first-party content: the issue-to-spec template and the golden run
- * fixture the replay player is developed against.
+ * Seed first-party content: the issue-to-spec template and its localized copy.
  *
- * Idempotent — safe to re-run. Re-seeding replaces the golden run rather than
- * appending to it, because runEvents is append-only and a second seed would
- * otherwise produce a stream with two run.start events.
+ * Deliberately seeds no run. The gallery is filled by curating runs that
+ * actually happened, so a fresh database has an empty gallery rather than a
+ * hand-authored event stream presenting itself as a real replay.
+ *
+ * Idempotent — safe to re-run.
  *
  *   DATABASE_URL=... bun run seed
  */
@@ -19,12 +20,6 @@ import {
   templateVersions,
   templates,
 } from "@/db/schema";
-import {
-  GOLDEN_RUN_DURATION_MS,
-  goldenRunArtifact,
-  validatedGoldenRun,
-} from "@/lib/fixtures/golden-run";
-import { foldUsage } from "@/lib/events/fold";
 import { newId } from "@/lib/ids";
 import {
   ISSUE_TO_SPEC_SLUG,
@@ -35,7 +30,6 @@ import {
   issueToSpecToolPolicy,
 } from "@/lib/templates/issue-to-spec";
 
-const GOLDEN_RUN_ID = "run_goldenfixture000000000";
 
 /**
  * Resolve the template's current version the same way the schema defines it:
@@ -123,71 +117,13 @@ async function seedTemplate() {
   });
 }
 
-async function seedGoldenRun(versionId: string) {
-  const beats = validatedGoldenRun();
-  const startedAt = new Date(Date.now() - GOLDEN_RUN_DURATION_MS);
-  const totals = foldUsage(beats);
-
-  // One transaction, for the same reason as seedTemplate: a run row without
-  // its events, or events without their artifact, is a broken replay that the
-  // next run would not repair.
-  return db.transaction(async (tx) => {
-  // Delete and re-insert: runEvents is append-only, so re-seeding on top of an
-  // existing stream would produce two run.start events in one run.
-  await tx.delete(runs).where(eq(runs.id, GOLDEN_RUN_ID));
-
-  await tx.insert(runs).values({
-    id: GOLDEN_RUN_ID,
-    workspaceId: null,
-    userId: null,
-    templateVersionId: versionId,
-    inputs: {
-      repo: "honojs/hono",
-      issue: "https://github.com/honojs/hono/issues/3421",
-      audience: "engineer",
-    },
-    status: "succeeded",
-    visibility: "public",
-    isDemo: true,
-    queuedAt: startedAt,
-    startedAt,
-    endedAt: new Date(startedAt.getTime() + GOLDEN_RUN_DURATION_MS),
-    inputTokens: totals.inputTokens,
-    outputTokens: totals.outputTokens,
-    cacheReadTokens: totals.cacheReadTokens,
-    cacheCreationTokens: totals.cacheCreationTokens,
-    costUsd: totals.costUsd.toFixed(6),
-  });
-
-    await tx.insert(runEvents).values(
-      beats.map((beat, i) => ({
-        runId: GOLDEN_RUN_ID,
-        seq: i + 1,
-        ts: new Date(startedAt.getTime() + beat.offsetMs),
-        type: beat.type,
-        payload: beat.payload,
-      })),
-    );
-
-    await tx.insert(runArtifacts).values({
-      id: newId("art"),
-      runId: GOLDEN_RUN_ID,
-      path: goldenRunArtifact.path,
-      mime: goldenRunArtifact.mime,
-      bytes: new TextEncoder().encode(goldenRunArtifact.content).length,
-      content: goldenRunArtifact.content,
-    });
-
-    return { events: beats.length, totals };
-  });
-}
-
 const { versionId } = await seedTemplate();
 console.log(`seeded template ${ISSUE_TO_SPEC_SLUG} (version ${versionId})`);
 
-const { events, totals } = await seedGoldenRun(versionId);
-console.log(
-  `seeded golden run ${GOLDEN_RUN_ID}: ${events} events, ${totals.inputTokens + totals.outputTokens} tokens, $${totals.costUsd.toFixed(4)}`,
-);
+// Deliberately no run. The gallery is filled by curating runs that actually
+// happened — `bun run enqueue` then `bun run curate promote` — so a fresh
+// database starts with an empty gallery and its empty state, rather than with a
+// hand-authored stream presenting itself as a real replay.
+console.log("gallery starts empty: enqueue a run, then `bun run curate promote <runId>`");
 
 process.exit(0);
