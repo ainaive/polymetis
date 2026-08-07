@@ -99,7 +99,7 @@ docs/adr/           decisions and their rationale
 | M3a | Queue claim, worker loop, settle, live SSE, tail view | done |
 | M3b | Accounts, access control, dashboard, run form, quota, GitHub App | done |
 | M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | done |
-| M5 | Sandbox verification, egress correction, retention | in progress |
+| M5 | Sandbox verification, egress correction, retention | done |
 
 M2 was split because its second half — the worker and live SSE — is what makes a
 run startable at all, and M3's dashboard and quota are UI around an action that
