@@ -46,6 +46,27 @@ and a **placeholder** token. The proxy swaps in the real credential on the way
 out. Exfiltrating anything from the container therefore gains an attacker
 nothing, and ADR-0002's rule holds for both credentials rather than one.
 
+> **Amended 2026-08-07 — the claim above was unenforced.** "Exfiltrating
+> anything from the container gains an attacker nothing" holds only if the
+> proxy sends the credential to *upstream*. It resolved the sandbox's
+> request-target with `new URL(req.url, upstream)`, which treats that target as
+> a URL reference rather than a path, so an absolute-form request line or a
+> protocol-relative target chose the destination and the proxy attached the real
+> credential to it. The run-token check does not catch this: code executing in
+> the container legitimately holds that token, and uses the credential path
+> exactly as designed — only the destination changes.
+>
+> The property is now enforced by `resolveUpstreamUrl` in
+> `src/lib/sandbox/proxy.ts`, which accepts only origin-form paths that resolve
+> onto the upstream origin. That function is the boundary in code, the way
+> `src/lib/sandbox/env.ts` is for the environment; its tests are the guarantee.
+>
+> Nothing had exercised it, because the container that would have made the
+> request has never run (see the egress note below) and the one shipped
+> template's tool policy has no `Bash`. Both are accidents of what has been
+> built so far, not controls — which is the same shape of mistake as the egress
+> claim ADR-0005 corrects.
+
 The environment handed to the container is built by **subtraction**: keep what
 the SDK asked for, strip anything credential-shaped, then inject ours last. An
 allowlist would have been stricter but wrong — the SDK puts variables in the
@@ -85,8 +106,12 @@ The blast radius of a prompt injection is bounded to the run: the agent can
 produce a wrong or malicious deliverable, exhaust its token ceiling, and read
 the checkout it was given. It cannot reach either credential, the database, the
 host filesystem, or other runs' workdirs — each of those follows from something
-enforced here: the credentials never enter the container, and the only mount is
-the run's own workdir.
+enforced here: the credentials never enter the container, the only mount is the
+run's own workdir, and the proxy will only carry the credential to upstream.
+
+That last clause is load-bearing and was added after the fact. "The credential
+is not in the container" bounds nothing on its own if the container can still
+direct where the credential gets sent — see the amendment above.
 
 Confining it to the proxy as its **only** network destination does not follow
 the same way. That depends on how the Docker network is configured on the host,
