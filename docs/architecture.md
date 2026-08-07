@@ -136,7 +136,7 @@ refuses that in production, so this is what stands between the project and a
 deployment. M5 made the design coherent (ADR-0005 corrects an egress claim in
 ADR-0003 that could not have worked) and wrote
 `scripts/verify/sandbox-isolation.ts`, which skips until a container runtime
-exists. Running it is tracked separately.
+exists. Running it is tracked in issue #7.
 
 **M2 carries the product risk.** If issue + repo → spec does not produce
 something a senior engineer says saved them real time, no amount of gallery
