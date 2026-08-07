@@ -34,11 +34,17 @@ export function TemplateCard({
         </span>
       </div>
 
+      {/*
+        The issue leads, not the template name. With one template every card
+        carried the same heading, so the most prominent text on the page was
+        the part that did not vary — and what a visitor is actually choosing
+        between was set in small mono underneath.
+      */}
       <div>
-        <h3 className="text-base font-semibold tracking-tight">{entry.title}</h3>
-        {entry.issue ? (
-          <p className="text-muted-foreground mt-0.5 font-mono text-xs">{entry.issue}</p>
-        ) : null}
+        <h3 className="font-mono text-sm font-semibold tracking-tight">
+          {entry.issue ?? entry.repo ?? entry.title}
+        </h3>
+        <p className="text-muted-foreground mt-0.5 text-xs">{entry.title}</p>
       </div>
 
       {/*

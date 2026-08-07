@@ -31,6 +31,8 @@ is the whole reason this is not automated.
 |---|---|---|---|
 | `run_g37gtk…` | honojs/hono | [#3869](https://github.com/honojs/hono/issues/3869) — type inference is slow during builds | Names the mechanism with file and line references, counts the overload ladder (23 + 21 + 23), and identifies that the tractable problem is *measurement* rather than optimisation — then designs the harness for it. |
 | `run_6i97tb…` | TanStack/query | [#2712](https://github.com/TanStack/query/issues/2712) — errored queries not retried on mount | Traces the mechanism across three files, notices the issue was filed against v3 while the repo is v5 and confirms the behaviour still follows, and says plainly which parts it verified by reading rather than by running. |
+| `run_gnzbwc…` | drizzle-team/drizzle-orm | [#886](https://github.com/drizzle-team/drizzle-orm/issues/886) — comments on tables and columns | Establishes with greps that the feature is greenfield across the whole stack, and caveats up front that line numbers drift and are "anchors, not addresses". |
+| `run_nlqfma…` | vitest-dev/vitest | [#6553](https://github.com/vitest-dev/vitest/issues/6553) — folder globbing in workspace config | Separates what the issue reports from what is true in the current checkout: the named option was removed in v4, the reported esbuild error no longer reproduces, and it cites the guard that fixed it. The most useful thing a spec can do with a stale issue. |
 
 ## Choosing repositories
 
