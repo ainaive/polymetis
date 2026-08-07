@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:http";
+import { connect } from "node:net";
 
 import {
   buildUpstreamHeaders,
   newRunToken,
   resolveProxyCredential,
+  resolveUpstreamUrl,
   startCredentialProxy,
   withCredentialProxy,
   type CredentialProxy,
@@ -48,6 +50,28 @@ async function fakeUpstream(
         server.close(() => resolve());
       }),
   };
+}
+
+/**
+ * Write a request to the proxy socket verbatim and return its status code.
+ * `fetch` normalizes the request line, so anything that tests how the proxy
+ * parses that line has to bypass it.
+ */
+function rawRequest(port: number, request: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1", () => socket.write(request));
+    let received = "";
+    socket.setTimeout(5_000, () => socket.destroy(new Error("raw request timed out")));
+    socket.on("data", (chunk) => {
+      received += chunk.toString();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const match = /^HTTP\/1\.[01] (\d{3})/.exec(received);
+      if (!match) return reject(new Error(`no status line in: ${received.slice(0, 200)}`));
+      resolve(Number(match[1]));
+    });
+  });
 }
 
 const RUN_TOKEN = newRunToken();
@@ -208,6 +232,149 @@ describe("authorization", () => {
     const b = newRunToken();
     expect(a).not.toBe(b);
     expect(a.length).toBeGreaterThan(30);
+  });
+});
+
+describe("resolveUpstreamUrl", () => {
+  const UP = "https://api.anthropic.com";
+
+  test("accepts an ordinary origin-form path", () => {
+    expect(resolveUpstreamUrl("/v1/messages", UP)?.href).toBe(
+      "https://api.anthropic.com/v1/messages",
+    );
+  });
+
+  test("keeps the query string", () => {
+    expect(resolveUpstreamUrl("/v1/models?limit=2", UP)?.href).toBe(
+      "https://api.anthropic.com/v1/models?limit=2",
+    );
+  });
+
+  test("dot segments cannot climb off the origin", () => {
+    // They resolve, but they stay on the upstream host, which is all we require.
+    expect(resolveUpstreamUrl("/v1/../../x", UP)?.origin).toBe(UP);
+  });
+
+  // Each of these resolves to a DIFFERENT origin under `new URL(target, base)`,
+  // which is what the unfixed proxy fed straight into fetch() with the real
+  // credential attached. Verified against the WHATWG parser, not assumed.
+  test.each([
+    ["absolute-form request line", "http://evil.tld/steal"],
+    ["absolute-form, https", "https://evil.tld/steal"],
+    ["protocol-relative", "//evil.tld/steal"],
+    ["three slashes", "///evil.tld/steal"],
+    // WHATWG URL treats a backslash as a slash for special schemes, so this
+    // starts with a single "/" and still escapes. A prefix test alone misses it.
+    ["backslash authority", "/\\evil.tld/steal"],
+    ["mixed slash authority", "/\\/evil.tld/steal"],
+    ["link-local metadata", "http://169.254.169.254/latest/meta-data/"],
+  ])("refuses %s", (_label, target) => {
+    expect(resolveUpstreamUrl(target, UP)).toBeNull();
+  });
+
+  test("refuses a target that is not a path at all", () => {
+    expect(resolveUpstreamUrl("v1/messages", UP)).toBeNull();
+    expect(resolveUpstreamUrl("", UP)).toBeNull();
+    expect(resolveUpstreamUrl(undefined, UP)).toBeNull();
+  });
+});
+
+describe("upstream confinement", () => {
+  /**
+   * The attacker-controlled destination. A real second server rather than an
+   * unroutable name: asserting it recorded nothing is what proves the
+   * credential did not leave, which "the fake upstream saw nothing" cannot.
+   */
+  let sinkClose: (() => Promise<void>) | undefined;
+
+  afterEach(async () => {
+    await sinkClose?.();
+    sinkClose = undefined;
+  });
+
+  test("a protocol-relative target is refused and reaches neither host", async () => {
+    const sink = await fakeUpstream(() => ({ body: '{"stolen":true}' }));
+    sinkClose = sink.close;
+    const upstream = await fakeUpstream(() => ({ body: "{}" }));
+    upstreamClose = upstream.close;
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "sk-ant-real" },
+      runToken: RUN_TOKEN,
+      tokenCeiling: 0,
+      upstream: upstream.url,
+    });
+
+    // Bun's fetch collapses a leading "//" in the path to "/", so this shape
+    // cannot be produced through fetch — it has to go on the wire by hand,
+    // which is precisely what a process inside the container would do.
+    const host = sink.url.replace(/^http:\/\//, "");
+    const status = await rawRequest(
+      proxy.port,
+      [
+        `GET //${host}/steal HTTP/1.1`,
+        `Host: 127.0.0.1:${proxy.port}`,
+        `Authorization: Bearer ${RUN_TOKEN}`,
+        "Connection: close",
+      ].join("\r\n") + "\r\n\r\n",
+    );
+
+    expect(status).toBe(400);
+    expect(sink.requests).toHaveLength(0);
+    expect(upstream.requests).toHaveLength(0);
+  });
+
+  test("an absolute-form request line is refused and reaches neither host", async () => {
+    const sink = await fakeUpstream(() => ({ body: '{"stolen":true}' }));
+    sinkClose = sink.close;
+    const upstream = await fakeUpstream(() => ({ body: "{}" }));
+    upstreamClose = upstream.close;
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "sk-ant-real" },
+      runToken: RUN_TOKEN,
+      tokenCeiling: 0,
+      upstream: upstream.url,
+    });
+
+    // fetch() cannot emit an absolute-form request line, and it is exactly what
+    // a process inside the container would write to the socket by hand.
+    const status = await rawRequest(
+      proxy.port,
+      [
+        `GET ${sink.url}/steal HTTP/1.1`,
+        `Host: 127.0.0.1:${proxy.port}`,
+        `Authorization: Bearer ${RUN_TOKEN}`,
+        "Connection: close",
+      ].join("\r\n") + "\r\n\r\n",
+    );
+
+    expect(status).toBe(400);
+    expect(sink.requests).toHaveLength(0);
+    expect(upstream.requests).toHaveLength(0);
+  });
+
+  test("a legitimate path still reaches upstream with the credential", async () => {
+    // The confinement must not have closed the door it exists to keep open.
+    const upstream = await fakeUpstream(() => ({ body: '{"ok":true}' }));
+    upstreamClose = upstream.close;
+    proxy = await startCredentialProxy({
+      port: 0,
+      credential: { kind: "apiKey", value: "sk-ant-real" },
+      runToken: RUN_TOKEN,
+      tokenCeiling: 0,
+      upstream: upstream.url,
+    });
+
+    const response = await fetch(`${local(proxy)}/v1/messages?beta=true`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${RUN_TOKEN}` },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(upstream.requests).toHaveLength(1);
+    expect(upstream.requests[0]?.headers["x-api-key"]).toBe("sk-ant-real");
   });
 });
 
