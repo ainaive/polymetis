@@ -109,18 +109,20 @@ async function main() {
   const started = results.filter((r) => r.ok).length;
   const refused = results.filter((r) => !r.ok).length;
 
+  // The lower bound matters as much as the cap. Every other assertion in this
+  // file is satisfied by started === 0 — at most MAX, refused === 10 - started,
+  // rows === started, queue rows === rows are all trivially true of nothing —
+  // so a regression that made all ten refuse (a stricter validateRunInputs, a
+  // classifyRepoSource that stopped accepting the fixture repo) would print
+  // PASS without the cap ever being exercised.
   check(
-    `at most ${MAX} of ten concurrent starts succeed`,
-    started <= MAX,
-    `${started} started`,
+    `exactly ${MAX} of ten concurrent starts succeed`,
+    started === MAX,
+    `${started} started, ${refused} refused: ${[
+      ...new Set(results.flatMap((r) => (r.ok ? [] : r.errors))),
+    ].join("; ")}`,
   );
   check("the rest are refused rather than erroring", refused === 10 - started);
-
-  const [live] = await db
-    .select({ id: runs.id })
-    .from(runs)
-    .where(eq(runs.workspaceId, workspaceId));
-  void live;
 
   const rows = await db
     .select({ id: runs.id })
