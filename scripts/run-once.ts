@@ -15,6 +15,7 @@ import { runs, templateVersions, templates } from "@/db/schema";
 import { totalInputTokens } from "@/lib/events/fold";
 import { newId } from "@/lib/ids";
 import { executeRun } from "@/lib/runner/execute";
+import { settleRun } from "@/lib/runner/settle";
 import { ISSUE_TO_SPEC_SLUG } from "@/lib/templates/issue-to-spec";
 import { env } from "@/env";
 
@@ -80,7 +81,9 @@ await db.insert(runs).values({
   templateVersionId: version.id,
   inputs,
   status: "running",
-  visibility: "public",
+  // Same default as scripts/enqueue.ts: the issue text is stored verbatim in
+  // `inputs`, so publishing is a choice, not a default.
+  visibility: "private",
   startedAt: new Date(),
 });
 
@@ -123,26 +126,34 @@ const result = await executeRun(db, {
   },
 });
 
-await db
-  .update(runs)
-  .set({
-    status: result.status,
-    endedAt: new Date(),
-    inputTokens: result.totals.inputTokens,
-    outputTokens: result.totals.outputTokens,
-    cacheReadTokens: result.totals.cacheReadTokens,
-    cacheCreationTokens: result.totals.cacheCreationTokens,
-    costUsd: result.totals.costUsd.toFixed(6),
-  })
-  .where(eq(runs.id, runId));
+// The same settle the worker uses, so a one-shot run is not a second-class
+// record: it stores the deliverable, downgrades a success that produced no
+// artifact, and records the proxy's counts when the run died before the SDK
+// reported any. Hand-rolling the update here is what left every run-once run
+// with an empty deliverable pane.
+const settled = await settleRun(db, {
+  runId,
+  // No queue row: this run was never enqueued, so there is no claim to confirm.
+  workerId: null,
+  workdir: repoPath,
+  deliverable: version.deliverable,
+  status: result.status,
+  totals: result.totals,
+  lastSeq: result.lastSeq,
+  observed: result.observed,
+  tripped: result.tripped,
+});
 
 console.log(`\n${"─".repeat(60)}`);
 console.log(`${result.status} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 console.log(`events: ${result.lastSeq}`);
 console.log(
-  `tokens: ${totalInputTokens(result.totals).toLocaleString()} in / ${result.totals.outputTokens.toLocaleString()} out`,
+  `tokens: ${totalInputTokens(settled.totals).toLocaleString()} in / ${settled.totals.outputTokens.toLocaleString()} out`,
 );
-console.log(`cost:   $${result.totals.costUsd.toFixed(4)}`);
+console.log(`cost:   $${settled.totals.costUsd.toFixed(4)}`);
+console.log(
+  `artifact: ${settled.artifactBytes === null ? "none written" : `${settled.artifactBytes} bytes`}`,
+);
 console.log(`replay: /en/runs/${runId}`);
 
 process.exit(result.status === "succeeded" ? 0 : 1);

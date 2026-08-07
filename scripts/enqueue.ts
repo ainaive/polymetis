@@ -14,10 +14,14 @@ import { newId } from "@/lib/ids";
 import { classifyRepoSource } from "@/lib/runner/workdir";
 import { ISSUE_TO_SPEC_SLUG } from "@/lib/templates/issue-to-spec";
 
-const repo = process.argv[2];
-const issuePath = process.argv[3];
+const args = process.argv.slice(2).filter((arg) => arg !== "--public");
+const isPublic = process.argv.includes("--public");
+const repo = args[0];
+const issuePath = args[1];
 if (!repo) {
-  console.error("usage: bun run scripts/enqueue.ts <repo-url|path> [issue-file]");
+  console.error(
+    "usage: bun run scripts/enqueue.ts <repo-url|path> [issue-file] [--public]",
+  );
   process.exit(1);
 }
 
@@ -67,7 +71,10 @@ await db.transaction(async (tx) => {
       audience: "engineer",
     },
     status: "queued",
-    visibility: "public",
+    // Private unless asked for. `inputs` stores the issue text verbatim, and
+    // publishing someone's issue because a script defaulted that way is not a
+    // mistake they can take back.
+    visibility: isPublic ? "public" : "private",
   });
   // Same transaction: a run row with no queue row is a run nothing will ever
   // pick up, and it would sit as "queued" forever.
@@ -76,6 +83,7 @@ await db.transaction(async (tx) => {
 
 console.log(`queued ${runId}`);
 console.log(`repo   ${repo}`);
+console.log(`visible ${isPublic ? "public" : "private"}`);
 console.log(`watch  /en/runs/${runId}`);
 
 process.exit(0);

@@ -41,7 +41,14 @@ export const OBSERVED_MODEL = "observed-at-proxy";
 
 export type SettleInput = {
   runId: string;
-  workerId: string;
+  /**
+   * The worker that holds the claim, or null for a run that was never queued.
+   *
+   * The one-shot script drives a run directly, so there is no queue row and no
+   * claim to confirm — but it needs the same totals, the same deliverable
+   * handling, and the same "succeeded without an artifact is not success" rule.
+   */
+  workerId: string | null;
   /** Where the agent worked, for reading the deliverable back out. */
   workdir: string;
   /** Null when the run failed before a template could even be resolved. */
@@ -103,15 +110,20 @@ export async function settleRun(db: Db, input: SettleInput): Promise<SettleResul
     // decided this worker was dead has already handed the run to someone else,
     // and two workers writing terminal facts for one run is how a replay ends
     // up describing neither attempt.
-    const closed = await tx
-      .update(runQueue)
-      .set({
-        state: status === "succeeded" ? "done" : "failed",
-        lockedBy: null,
-        lockedAt: null,
-      })
-      .where(and(eq(runQueue.runId, input.runId), eq(runQueue.lockedBy, input.workerId)))
-      .returning({ runId: runQueue.runId });
+    const workerId = input.workerId;
+    const closed = workerId
+      ? await tx
+          .update(runQueue)
+          .set({
+            state: status === "succeeded" ? "done" : "failed",
+            lockedBy: null,
+            lockedAt: null,
+          })
+          .where(and(eq(runQueue.runId, input.runId), eq(runQueue.lockedBy, workerId)))
+          .returning({ runId: runQueue.runId })
+      : // Unqueued: nothing to close, and nothing that could have taken the run
+        // away, because nothing else knows about it.
+        [{ runId: input.runId }];
 
     if (closed.length === 0) {
       // Another worker owns this run. Nothing is written — not the run row, not
