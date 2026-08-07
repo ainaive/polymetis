@@ -26,6 +26,8 @@ const heartbeatMs = env.WORKER_HEARTBEAT_SECONDS * 1000;
 /** A claim is stale after three missed heartbeats, not one — a GC pause is not death. */
 const staleAfterSeconds = env.WORKER_HEARTBEAT_SECONDS * 3;
 const IDLE_POLL_MS = 2_000;
+/** How long shutdown waits for in-flight runs to unwind before releasing them. */
+const SHUTDOWN_GRACE_MS = 10_000;
 
 type InFlight = {
   claim: ClaimedRun;
@@ -56,11 +58,20 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
 
   // Prove we are still alive, and notice when the reaper decided we were not.
   const beat = setInterval(() => {
-    void heartbeat(db, claim.runId, workerId).then((held) => {
-      if (held || abort.signal.aborted) return;
-      log(`${claim.runId} was reaped out from under us — stopping`);
-      abort.abort();
-    });
+    heartbeat(db, claim.runId, workerId).then(
+      (held) => {
+        if (held || abort.signal.aborted) return;
+        log(`${claim.runId} was reaped out from under us — stopping`);
+        abort.abort();
+      },
+      (error) => {
+        // A rejection handler, not decoration. Bun terminates the process on an
+        // unhandled rejection, so a single transient database error would kill
+        // the worker and abandon every other run it is driving. One failed beat
+        // is also not proof the claim is gone: say so and let the next decide.
+        log(`heartbeat for ${claim.runId} failed: ${error}`);
+      },
+    );
   }, heartbeatMs);
 
   try {
@@ -102,10 +113,19 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
         : `${claim.runId} finished but the claim was already gone; wrote nothing`,
     );
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    // A run stopped by shutdown is not a failed run — it is one this worker
+    // will not finish. Settling it here would record a terminal status for an
+    // attempt that shutdown() is about to hand back to the queue.
+    if (shuttingDown) {
+      log(`${claim.runId} stopped for shutdown: ${message}`);
+      return;
+    }
+
     // Failing to prepare or load is still a finished attempt: without a settle
     // the queue row stays claimed until the reaper times it out, which is a
     // fifteen-minute pause for something we already know went wrong.
-    const message = error instanceof Error ? error.message : String(error);
     log(`${claim.runId} failed before or during execution: ${message}`);
 
     await settleRun(db, {
@@ -192,18 +212,33 @@ function sleep(ms: number): Promise<void> {
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  log(`${signal} received — releasing ${inFlight.size} in-flight run(s)`);
+
+  // Captured before awaiting: a run that settles on its own removes itself from
+  // the map, and releasing a claim it already closed must still be harmless.
+  const entries = [...inFlight.values()];
+  log(`${signal} received — stopping ${entries.length} in-flight run(s)`);
+
+  for (const entry of entries) entry.abort.abort();
+
+  // Wait for them to unwind before the claims move. abort() returns
+  // immediately, but the driver is still appending its terminal events; giving
+  // the run back first lets another worker claim it while the previous attempt
+  // is still writing, and both attempts then interleave in one append-only log.
+  await Promise.race([
+    Promise.allSettled(entries.map((entry) => entry.done)),
+    sleep(SHUTDOWN_GRACE_MS),
+  ]);
 
   // Give the claims back rather than letting them time out. The worker knows it
   // will not finish; making another worker wait three heartbeats to discover
-  // that is a pause with no information in it.
+  // that is a pause with no information in it. releaseClaim is guarded on
+  // lockedBy, so a run that settled normally in the meantime is left alone.
   await Promise.all(
-    [...inFlight.values()].map(async (entry) => {
-      entry.abort.abort();
-      await releaseClaim(db, entry.claim.runId, workerId).catch((error) => {
+    entries.map((entry) =>
+      releaseClaim(db, entry.claim.runId, workerId).catch((error) => {
         log(`could not release ${entry.claim.runId}: ${error}`);
-      });
-    }),
+      }),
+    ),
   );
 
   log("done");
