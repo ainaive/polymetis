@@ -36,6 +36,11 @@
     "emptyDeliverable": "尚未写入内容，点击播放开始。",
     "liveBadge": "进行中",
     "finished": "回放结束",
+    "liveConnecting": "连接中…",
+    "liveEnded": "运行已结束",
+    "liveWaiting": "正在等待工作进程接管…",
+    "liveReconnecting": "正在重新连接…",
+    "replayFromStart": "从头回放",
     "event": {
       "runStart": "已启动 <code>{template}</code>",
       "runStartOn": "已在 <code>{target}</code> 上启动 <code>{template}</code>",

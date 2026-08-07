@@ -3,9 +3,11 @@ import type { Metadata } from "next";
 import { getFormatter, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
+import { LiveRun } from "@/components/replay/live-run";
 import { ReplayPlayer } from "@/components/replay/replay-player";
 import { Badge } from "@/components/ui/badge";
 import { getReplay } from "@/db/queries/runs";
+import { isTerminalRunStatus } from "@/lib/events/fold";
 import { Link } from "@/i18n/navigation";
 import type { Locale } from "@/i18n/routing";
 
@@ -34,6 +36,9 @@ export default async function ReplayPage({ params }: Props) {
   // grouping the machine happens to run — and the same page would render
   // differently in dev and in production.
   const format = await getFormatter();
+  // Not terminal means the log can still grow, which is the only thing that
+  // decides between the tail and the player.
+  const live = !isTerminalRunStatus(replay.run.status);
   const durationMs =
     replay.run.startedAt && replay.run.endedAt
       ? replay.run.endedAt.getTime() - replay.run.startedAt.getTime()
@@ -84,24 +89,43 @@ export default async function ReplayPage({ params }: Props) {
         </div>
       </header>
 
-      <ReplayPlayer
-        events={replay.events}
-        artifact={replay.artifact}
-        labels={{
-          play: t("play"),
-          pause: t("pause"),
-          restart: t("restart"),
-          speed: t("speed"),
-          elapsed: t("elapsed"),
-          cost: t("cost"),
-          steps: t("steps"),
-          filter: t("filter"),
-          deliverable: t("deliverable"),
-          emptyDeliverable: t("emptyDeliverable"),
-          liveBadge: t("liveBadge"),
-          finished: t("finished"),
-        }}
-      />
+      {live ? (
+        // A run that has not finished has no duration to scrub over, so it gets
+        // a tail rather than the player. router.refresh() swaps in the player
+        // once run.end arrives.
+        <LiveRun
+          runId={replay.run.id}
+          initialEvents={replay.events}
+          labels={{
+            connecting: t("liveConnecting"),
+            live: t("liveBadge"),
+            ended: t("liveEnded"),
+            waiting: t("liveWaiting"),
+            reconnecting: t("liveReconnecting"),
+            replayFromStart: t("replayFromStart"),
+            tokens: t("tokens"),
+          }}
+        />
+      ) : (
+        <ReplayPlayer
+          events={replay.events}
+          artifact={replay.artifact}
+          labels={{
+            play: t("play"),
+            pause: t("pause"),
+            restart: t("restart"),
+            speed: t("speed"),
+            elapsed: t("elapsed"),
+            cost: t("cost"),
+            steps: t("steps"),
+            filter: t("filter"),
+            deliverable: t("deliverable"),
+            emptyDeliverable: t("emptyDeliverable"),
+            liveBadge: t("liveBadge"),
+            finished: t("finished"),
+          }}
+        />
+      )}
     </div>
   );
 }
