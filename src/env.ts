@@ -110,14 +110,44 @@ export type Env = Omit<
   DATABASE_URL: string;
 };
 
-const parsed = schema.parse(process.env);
+/**
+ * Refuse to boot on a configuration that is only safe in development.
+ *
+ * Exported and pure so it can be tested. As an inline block at module scope it
+ * ran once at import and nothing could reach it, which is a poor property for
+ * the check standing between `SANDBOX_MODE=none` and a production deployment.
+ *
+ * `isBuildPhase` exempts the credential checks only. Skipping them during
+ * `next build` is an argument about secrets — build machines have none and need
+ * none — and it does not extend to the sandbox. `NEXT_PHASE` is a Next.js-owned
+ * variable that a worker never sets deliberately, so a stale value inherited
+ * from a shared env file or a base image must not be able to switch the
+ * sandbox off.
+ */
+export function assertProductionSafe(
+  parsed: Pick<
+    z.infer<typeof schema>,
+    "NODE_ENV" | "BETTER_AUTH_SECRET" | "DATABASE_URL" | "SANDBOX_MODE"
+  >,
+  options: { isBuildPhase: boolean },
+): void {
+  if (parsed.NODE_ENV !== "production") return;
 
-// Production must not run on dev fallbacks: a guessable auth secret lets
-// anyone forge a session, and a defaulted DATABASE_URL points at nothing real.
-// Enforced at runtime, not during `next build` — build machines have no
-// secrets and need none.
-const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
-if (parsed.NODE_ENV === "production" && !isBuildPhase) {
+  // SANDBOX_MODE=none runs a model-driven agent over untrusted repository
+  // content directly on the host, with the worker's own filesystem and network.
+  // It exists so the driver can be developed before a container runtime is
+  // available (ADR-0003); in production it is the whole threat model deleted.
+  // Checked ahead of the build-phase exemption because no build needs it.
+  if (parsed.SANDBOX_MODE === "none") {
+    throw new Error(
+      "SANDBOX_MODE=none runs the agent unsandboxed on the host and must never be used in production — set SANDBOX_MODE=docker",
+    );
+  }
+
+  // Production must not run on dev fallbacks: a guessable auth secret lets
+  // anyone forge a session, and a defaulted DATABASE_URL points at nothing real.
+  if (options.isBuildPhase) return;
+
   // 32 is better-auth's own minimum: below it, it logs a low-entropy warning
   // that is easy to miss in deploy logs. Fail the boot instead.
   if (
@@ -132,16 +162,13 @@ if (parsed.NODE_ENV === "production" && !isBuildPhase) {
   if (!parsed.DATABASE_URL) {
     throw new Error("DATABASE_URL must be set explicitly in production");
   }
-  // SANDBOX_MODE=none runs a model-driven agent over untrusted repository
-  // content directly on the host, with the worker's own filesystem and network.
-  // It exists so the driver can be developed before a container runtime is
-  // available (ADR-0003); in production it is the whole threat model deleted.
-  if (parsed.SANDBOX_MODE === "none") {
-    throw new Error(
-      "SANDBOX_MODE=none runs the agent unsandboxed on the host and must never be used in production — set SANDBOX_MODE=docker",
-    );
-  }
 }
+
+const parsed = schema.parse(process.env);
+
+assertProductionSafe(parsed, {
+  isBuildPhase: process.env.NEXT_PHASE === "phase-production-build",
+});
 
 export const env: Env = {
   ...parsed,
