@@ -239,3 +239,14 @@ export function frameIndexAt(
   }
   return found;
 }
+
+/**
+ * True when a run will never produce another event.
+ *
+ * The live view and the SSE route both branch on this, and they have to agree:
+ * a page that renders the tail for a finished run waits forever for a stream
+ * that closes immediately.
+ */
+export function isTerminalRunStatus(status: string): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "timed_out";
+}
