@@ -7,7 +7,24 @@
     "gallery": "Gallery",
     "templates": "Templates",
     "signIn": "Sign in",
-    "dashboard": "Dashboard"
+    "dashboard": "Dashboard",
+    "signOut": "Sign out"
+  },
+  "auth": {
+    "signInTitle": "Sign in",
+    "signInSubtitle": "Run templates on your own repositories.",
+    "signUpTitle": "Create an account",
+    "signUpSubtitle": "Free while Polymetis is in development.",
+    "email": "Email",
+    "password": "Password",
+    "name": "Name",
+    "signInSubmit": "Sign in",
+    "signUpSubmit": "Create account",
+    "continueWithGithub": "Continue with GitHub",
+    "or": "or",
+    "haveAccount": "Already have an account?",
+    "noAccount": "No account yet?",
+    "genericError": "That did not work. Please try again."
   },
   "home": {
     "tagline": "Agent templates for software R&D",

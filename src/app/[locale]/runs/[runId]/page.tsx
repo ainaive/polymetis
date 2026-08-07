@@ -45,7 +45,7 @@ export default async function ReplayPage({ params }: Props) {
       : 0;
 
   return (
-    <div className="mx-auto flex h-dvh max-w-7xl flex-col gap-4 px-4 py-5">
+    <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-4 px-4 py-5">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <Link

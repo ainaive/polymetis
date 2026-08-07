@@ -3,6 +3,7 @@ import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
+import { SiteHeader } from "@/components/site-header";
 import { routing } from "@/i18n/routing";
 
 import "../globals.css";
@@ -39,8 +40,14 @@ export default async function LocaleLayout({
 
   return (
     <html lang={locale} suppressHydrationWarning>
-      <body className="bg-background text-foreground antialiased">
-        <NextIntlClientProvider>{children}</NextIntlClientProvider>
+      {/* A flex column so a page can fill the space under the header rather
+          than assuming the whole viewport — the replay player needs the
+          remainder, not 100dvh. */}
+      <body className="bg-background text-foreground flex min-h-dvh flex-col antialiased">
+        <NextIntlClientProvider>
+          <SiteHeader />
+          <main className="flex min-h-0 flex-1 flex-col">{children}</main>
+        </NextIntlClientProvider>
       </body>
     </html>
   );
