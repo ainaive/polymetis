@@ -37,10 +37,13 @@ export type RunFormLabels = {
 export function RunForm({
   locale,
   template,
+  repos,
   labels,
 }: {
   locale: Locale;
   template: StartableTemplate;
+  /** Repositories the connected installation can read. Empty when none. */
+  repos: string[];
   labels: RunFormLabels;
 }) {
   const router = useRouter();
@@ -78,7 +81,7 @@ export function RunForm({
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       {template.inputSchema.fields.map((field) => (
-        <Field key={field.name} field={field} labels={labels} />
+        <Field key={field.name} field={field} repos={repos} labels={labels} />
       ))}
 
       {errors.length > 0 ? (
@@ -99,9 +102,11 @@ export function RunForm({
 
 function Field({
   field,
+  repos,
   labels,
 }: {
   field: TemplateInputField;
+  repos: string[];
   labels: RunFormLabels;
 }) {
   // The catalog is keyed by field name so a template's inputs can be named in
@@ -133,12 +138,25 @@ function Field({
           ))}
         </select>
       ) : (
-        <Input
-          id={field.name}
-          name={field.name}
-          required={field.required}
-          maxLength={field.type === "text" ? field.maxLength : undefined}
-        />
+        <>
+          <Input
+            id={field.name}
+            name={field.name}
+            required={field.required}
+            maxLength={field.type === "text" ? field.maxLength : undefined}
+            // A datalist rather than a select: the connected repositories are
+            // suggestions, not the whole set. A public URL must still work for
+            // someone who has connected nothing, which is most people at first.
+            list={field.type === "repo" && repos.length > 0 ? "connected-repos" : undefined}
+          />
+          {field.type === "repo" && repos.length > 0 ? (
+            <datalist id="connected-repos">
+              {repos.map((repo) => (
+                <option key={repo} value={repo} />
+              ))}
+            </datalist>
+          ) : null}
+        </>
       )}
 
       {hint ? <p className="text-muted-foreground text-xs">{hint}</p> : null}

@@ -2,8 +2,13 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 
 import { requireSession } from "@/auth/require";
 import { RunForm } from "@/components/runs/run-form";
+import { db } from "@/db";
+import { installationForWorkspace } from "@/db/queries/github";
 import { listStartableTemplates } from "@/db/queries/templates";
+import { githubAppConfigured, requireGithubApp } from "@/env";
+import { InstallationTokens, listInstallationRepos } from "@/lib/github/app";
 import type { Locale } from "@/i18n/routing";
+import { requireWorkspace } from "@/lib/workspaces/provision";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +19,15 @@ export default async function NewRunPage({
 }) {
   const { locale } = await params;
   setRequestLocale(locale);
-  await requireSession(locale);
+  const session = await requireSession(locale);
 
-  const [t, templates] = await Promise.all([
+  const [t, templates, workspaceId] = await Promise.all([
     getTranslations("newRun"),
     listStartableTemplates(locale),
+    requireWorkspace(db, session.user),
   ]);
+
+  const repos = await connectedRepos(workspaceId);
 
   // One template in v1. When there are several this becomes a picker; until
   // then, rendering a chooser with a single option is noise.
@@ -37,6 +45,7 @@ export default async function NewRunPage({
           <RunForm
             locale={locale}
             template={template}
+            repos={repos}
             labels={{
               submit: t("submit"),
               submitting: t("submitting"),
@@ -61,4 +70,28 @@ export default async function NewRunPage({
       )}
     </div>
   );
+}
+
+
+/**
+ * The repositories this workspace can reach, for the picker.
+ *
+ * Returns none rather than throwing when GitHub is unreachable or the App was
+ * uninstalled: the form still works with a typed-in public URL, and a settings
+ * problem should not make it impossible to start any run at all.
+ */
+async function connectedRepos(workspaceId: string): Promise<string[]> {
+  if (!githubAppConfigured) return [];
+
+  try {
+    const installationId = await installationForWorkspace(db, workspaceId);
+    if (!installationId) return [];
+
+    const tokens = new InstallationTokens(requireGithubApp());
+    const repos = await listInstallationRepos(await tokens.get(installationId));
+    return repos.map((repo) => repo.fullName).sort();
+  } catch (error) {
+    console.error("[github] could not list installation repositories:", error);
+    return [];
+  }
 }
