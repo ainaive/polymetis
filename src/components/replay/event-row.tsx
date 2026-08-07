@@ -13,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { memo } from "react";
 
 import type { ReplayFrame } from "@/lib/events/fold";
 import type { RunEventType } from "@/lib/events/schema";
@@ -38,7 +39,7 @@ export function formatElapsed(ms: number): string {
 }
 
 /** One event in the stream. Kept dumb so the player owns all timing state. */
-export function EventRow({ frame }: { frame: ReplayFrame }) {
+function EventRowImpl({ frame }: { frame: ReplayFrame }) {
   const failed =
     (frame.type === "tool.result" && !frame.payload.ok) || frame.type === "error";
   const Icon = failed ? XCircle : ICONS[frame.type];
@@ -171,3 +172,14 @@ function Mono({ children }: { children: React.ReactNode }) {
     <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs">{children}</code>
   );
 }
+
+/**
+ * Compared by seq, not by identity.
+ *
+ * buildTimeline rebuilds every frame object whenever the event list changes, so
+ * the default shallow compare never matches and a live run re-renders all of
+ * its rows on each new event — each of which calls useTranslations. The log is
+ * append-only (ADR-0001), so a given seq's frame content can never change:
+ * offsetMs and costUsdSoFar depend only on events at or before it.
+ */
+export const EventRow = memo(EventRowImpl, (a, b) => a.frame.seq === b.frame.seq);

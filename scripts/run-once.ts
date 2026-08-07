@@ -12,16 +12,10 @@ import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import { db } from "@/db";
 import { runs, templateVersions, templates } from "@/db/schema";
-import { runAgent } from "@/lib/agent/driver";
 import { totalInputTokens } from "@/lib/events/fold";
 import { newId } from "@/lib/ids";
-import {
-  newRunToken,
-  resolveProxyCredential,
-  withCredentialProxy,
-  type CredentialProxy,
-} from "@/lib/sandbox/proxy";
-import { createSandboxSpawn } from "@/lib/sandbox/spawn";
+import { executeRun } from "@/lib/runner/execute";
+import { settleRun } from "@/lib/runner/settle";
 import { ISSUE_TO_SPEC_SLUG } from "@/lib/templates/issue-to-spec";
 import { env } from "@/env";
 
@@ -71,14 +65,14 @@ if (!version) {
 }
 
 const runId = newId("run");
-// run.start records inputs verbatim and a replay has to stand alone, so this
-// has to name the actual source. It read "(inline)" unconditionally, which made
-// a run driven by an issue file indistinguishable from one using the built-in
-// sample — and the sample is the thing you would want to rule out first when a
-// replay looks wrong.
+// The same shape scripts/enqueue.ts writes, so a run driven from here and one
+// driven through the queue record the same thing: `issue` is the text the agent
+// was given, `issueSource` is where it came from. A replay has to stand alone,
+// and "(built-in sample)" is the first thing to rule out when one looks wrong.
 const inputs = {
   repo: repoPath,
-  issue: issuePath ?? "(built-in sample)",
+  issue,
+  issueSource: issuePath ?? "(built-in sample)",
   audience: "engineer",
 };
 
@@ -87,7 +81,9 @@ await db.insert(runs).values({
   templateVersionId: version.id,
   inputs,
   status: "running",
-  visibility: "public",
+  // Same default as scripts/enqueue.ts: the issue text is stored verbatim in
+  // `inputs`, so publishing is a choice, not a default.
+  visibility: "private",
   startedAt: new Date(),
 });
 
@@ -97,89 +93,67 @@ console.log(`model  ${version.model} (effort ${version.effort})`);
 console.log(`sandbox ${env.SANDBOX_MODE}\n`);
 
 const started = Date.now();
-const runToken = newRunToken();
 
-/** One place that builds the run, so both sandbox modes stay identical. */
-async function execute(proxy: CredentialProxy | null) {
-  return runAgent(db, {
-    runId,
-    workdir: repoPath,
-    template: {
-      slug: version.slug,
-      version: version.version,
-      directives: version.directives,
-      deliverable: version.deliverable,
-      toolPolicy: version.toolPolicy,
-      model: version.model,
-      effort: version.effort,
-    },
-    inputs,
-    issue,
-    timeoutSeconds: env.RUN_TIMEOUT_SECONDS,
-    spawn: createSandboxSpawn({
-      mode: env.SANDBOX_MODE,
-      image: env.SANDBOX_IMAGE,
-      // In `none` mode there is no container and no proxy; the spawn ignores
-      // both and lets the agent resolve credentials locally.
-      proxyBaseUrl: proxy?.baseUrl ?? "",
-      placeholderToken: runToken,
-      workdir: repoPath,
-      network: env.SANDBOX_NETWORK,
-      memory: env.SANDBOX_MEMORY,
-      cpus: env.SANDBOX_CPUS,
-    }),
-    onEvents: (events, lastSeq) => {
-      for (const event of events) {
-        const detail =
-          event.type === "tool.call"
-            ? `${event.payload.tool} ${event.payload.summary}`
-            : event.type === "agent.message"
-              ? event.payload.text.slice(0, 90)
-              : event.type === "artifact.write"
-                ? `${event.payload.path} (${event.payload.bytes} bytes)`
-                : "";
-        console.log(`  ${String(lastSeq).padStart(3)} ${event.type.padEnd(14)} ${detail}`);
-      }
-    },
-  });
-}
+// The proxy lifecycle, the sandbox spawn and the driver all live in
+// executeRun, so this script and the worker cannot drift apart on the one
+// sequence where drift means a credential relay left running.
+const result = await executeRun(db, {
+  runId,
+  workdir: repoPath,
+  template: {
+    slug: version.slug,
+    version: version.version,
+    directives: version.directives,
+    deliverable: version.deliverable,
+    toolPolicy: version.toolPolicy,
+    model: version.model,
+    effort: version.effort,
+  },
+  inputs,
+  issue,
+  onEvents: (events, lastSeq) => {
+    for (const event of events) {
+      const detail =
+        event.type === "tool.call"
+          ? `${event.payload.tool} ${event.payload.summary}`
+          : event.type === "agent.message"
+            ? event.payload.text.slice(0, 90)
+            : event.type === "artifact.write"
+              ? `${event.payload.path} (${event.payload.bytes} bytes)`
+              : "";
+      console.log(`  ${String(lastSeq).padStart(3)} ${event.type.padEnd(14)} ${detail}`);
+    }
+  },
+});
 
-// Docker mode reaches the API only through the proxy, so the proxy has to
-// exist for the whole run. Previously nothing started it and the container
-// pointed at a listener that was never opened.
-const result =
-  env.SANDBOX_MODE === "docker"
-    ? await withCredentialProxy(
-        {
-          port: env.SANDBOX_PROXY_PORT,
-          credential: resolveProxyCredential(env.ANTHROPIC_API_KEY),
-          runToken,
-          tokenCeiling: env.RUN_TOKEN_CEILING,
-        },
-        (proxy) => execute(proxy),
-      )
-    : await execute(null);
-
-await db
-  .update(runs)
-  .set({
-    status: result.status,
-    endedAt: new Date(),
-    inputTokens: result.totals.inputTokens,
-    outputTokens: result.totals.outputTokens,
-    cacheReadTokens: result.totals.cacheReadTokens,
-    cacheCreationTokens: result.totals.cacheCreationTokens,
-    costUsd: result.totals.costUsd.toFixed(6),
-  })
-  .where(eq(runs.id, runId));
+// The same settle the worker uses, so a one-shot run is not a second-class
+// record: it stores the deliverable, downgrades a success that produced no
+// artifact, and records the proxy's counts when the run died before the SDK
+// reported any. Hand-rolling the update here is what left every run-once run
+// with an empty deliverable pane.
+const settled = await settleRun(db, {
+  runId,
+  // No queue row: this run was never enqueued, so there is no claim to confirm.
+  workerId: null,
+  workdir: repoPath,
+  deliverable: version.deliverable,
+  status: result.status,
+  totals: result.totals,
+  lastSeq: result.lastSeq,
+  observed: result.observed,
+  tripped: result.tripped,
+});
 
 console.log(`\n${"─".repeat(60)}`);
 console.log(`${result.status} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 console.log(`events: ${result.lastSeq}`);
 console.log(
-  `tokens: ${totalInputTokens(result.totals).toLocaleString()} in / ${result.totals.outputTokens.toLocaleString()} out`,
+  `tokens: ${totalInputTokens(settled.totals).toLocaleString()} in / ${settled.totals.outputTokens.toLocaleString()} out`,
 );
-console.log(`cost:   $${result.totals.costUsd.toFixed(4)}`);
+console.log(`cost:   $${settled.totals.costUsd.toFixed(4)}`);
+console.log(
+  `artifact: ${settled.artifactBytes === null ? "none written" : `${settled.artifactBytes} bytes`}`,
+);
 console.log(`replay: /en/runs/${runId}`);
 
 process.exit(result.status === "succeeded" ? 0 : 1);
