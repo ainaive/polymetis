@@ -48,7 +48,18 @@ writes the token to disk inside the directory we then hand to the agent.
    host. Sending a GitHub credential to any other host because a run input said
    so is the kind of mistake that is obvious only afterwards.
 
-5. **Failing to mint a token is not fatal.** A public repository clones without
+5. **An installation is claimed only by someone who can administer it.** The
+   callback receives `installation_id` as an ordinary query parameter, so it
+   proves three things before writing: a signed `state` this server issued to
+   the session, the installation appearing in that user's own
+   `/user/installations`, and that no other workspace already holds it.
+
+   Minting an installation token is **not** such a proof. It succeeds for every
+   installation of the App, including other customers'. The first version of
+   this code used it as one — and said so in a comment — which would have let
+   anyone attach someone else's installation to their own workspace.
+
+6. **Failing to mint a token is not fatal.** A public repository clones without
    one. Treating it as fatal would turn "someone uninstalled the App" into
    every run in that workspace failing.
 
@@ -68,10 +79,16 @@ What this costs:
   Submodules are not fetched (`--depth 1` without `--recurse-submodules`), so
   this is currently unreachable — but it is the reason point 4 checks the host
   rather than trusting the clone to stay on one.
-- **The App must be registered by an operator.** There is no way to provision
-  it from code, so a deployment without `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
-  `GITHUB_APP_PRIVATE_KEY` has no repository access at all. The settings page
+- **The App must be registered by an operator**, with user authorization during
+  installation enabled. There is no way to provision it from code, so a
+  deployment missing any of `GITHUB_APP_ID`, `GITHUB_APP_SLUG`,
+  `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_CLIENT_ID` or
+  `GITHUB_APP_CLIENT_SECRET` has no repository access at all. The settings page
   says so rather than hiding the button.
+- **Installing from GitHub's own App page does not connect anything.** That
+  route carries no state, so the callback sends the person to settings to start
+  again. Refusing is the only safe answer: without state there is nothing
+  tying the installation to a session.
 
 ## Verification
 

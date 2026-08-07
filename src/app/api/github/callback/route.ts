@@ -1,46 +1,110 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 
 import { getSession } from "@/auth/session";
 import { db } from "@/db";
 import { githubInstallations } from "@/db/schema";
-import { requireGithubApp } from "@/env";
-import { createInstallationToken } from "@/lib/github/app";
+import { env, requireGithubApp } from "@/env";
+import { routing } from "@/i18n/routing";
+import {
+  createInstallationToken,
+  exchangeUserCode,
+  userCanAccessInstallation,
+} from "@/lib/github/app";
+import { verifyInstallState } from "@/lib/github/install-state";
 import { newId } from "@/lib/ids";
 import { requireWorkspace } from "@/lib/workspaces/provision";
 
 /**
  * Where GitHub sends someone after they install the App.
  *
- * GitHub appends `installation_id` and `setup_action`. Neither is a secret and
- * both are attacker-supplied, so the id is proved rather than believed: minting
- * a token for it requires the App's private key, and GitHub only issues one for
- * an installation that really exists. Recording an id we could not mint for
- * would let anyone attach someone else's installation to their own workspace.
+ * Everything in the query string is attacker-supplied, including
+ * `installation_id`. Three separate things therefore have to be established
+ * before anything is written:
+ *
+ *  1. **Who is asking** — a signed `state` this server issued to this session.
+ *  2. **That they can administer that installation** — checked against the
+ *     user's own `/user/installations`, not inferred. Minting an installation
+ *     token proves only that the installation exists and our App is on it,
+ *     which is true of every other customer's installation too. An earlier
+ *     version of this file used that as the proof and said so in a comment;
+ *     it would have let anyone attach someone else's installation to their own
+ *     workspace.
+ *  3. **That it is not already someone else's** — first claim wins.
  */
 export async function GET(request: NextRequest) {
-  const locale = request.nextUrl.searchParams.get("locale") ?? "en";
-  const settings = new URL(`/${locale}/settings/github`, request.nextUrl.origin);
+  const params = request.nextUrl.searchParams;
 
   const session = await getSession();
   if (!session) {
-    return Response.redirect(new URL(`/${locale}/sign-in`, request.nextUrl.origin), 302);
+    return redirectTo(request, "en", "/sign-in");
   }
 
-  const installationId = request.nextUrl.searchParams.get("installation_id");
+  const state = verifyInstallState(
+    params.get("state"),
+    env.BETTER_AUTH_SECRET,
+    Date.now(),
+  );
+
+  // No usable state: someone installed the App from GitHub's own page rather
+  // than from ours, or the link is stale. Not an error, and not something to
+  // act on either — they can connect from settings, which issues a fresh one.
+  if (!state) {
+    return redirectTo(request, "en", "/settings/github", { error: "no-state" });
+  }
+
+  const locale = safeLocale(state.locale);
+
+  if (state.userId !== session.user.id) {
+    // The install was started by someone else in this browser.
+    return redirectTo(request, locale, "/settings/github", { error: "wrong-user" });
+  }
+
+  const installationId = params.get("installation_id");
+  const code = params.get("code");
   if (!installationId) {
-    settings.searchParams.set("error", "missing-installation");
-    return Response.redirect(settings, 302);
+    return redirectTo(request, locale, "/settings/github", {
+      error: "missing-installation",
+    });
   }
 
   try {
     const app = requireGithubApp();
 
-    // The proof. Also the first moment we learn which account it is on.
-    const token = await createInstallationToken(app, installationId);
-    const accountLogin = await installationAccountLogin(token.token);
+    // Fail closed. Without the OAuth code there is no way to tell whose
+    // installation this is, and guessing is the whole vulnerability.
+    if (!code) {
+      return redirectTo(request, locale, "/settings/github", { error: "no-code" });
+    }
+
+    const userToken = await exchangeUserCode(app.clientId, app.clientSecret, code);
+    if (!(await userCanAccessInstallation(userToken, installationId))) {
+      return redirectTo(request, locale, "/settings/github", { error: "not-yours" });
+    }
 
     const workspaceId = await requireWorkspace(db, session.user);
+
+    // First claim wins. Reconnecting your own installation is normal; moving
+    // one that another workspace already holds is a takeover, and the person
+    // who holds it has to disconnect first.
+    const [heldElsewhere] = await db
+      .select({ id: githubInstallations.id })
+      .from(githubInstallations)
+      .where(
+        and(
+          eq(githubInstallations.installationId, installationId),
+          ne(githubInstallations.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+
+    if (heldElsewhere) {
+      return redirectTo(request, locale, "/settings/github", { error: "already-claimed" });
+    }
+
+    // Only now, and only to learn the account name for display.
+    const installationToken = await createInstallationToken(app, installationId);
+    const accountLogin = await installationAccountLogin(installationToken.token);
 
     await db
       .insert(githubInstallations)
@@ -51,43 +115,17 @@ export async function GET(request: NextRequest) {
         accountLogin,
         connectedByUserId: session.user.id,
       })
-      // Reinstalling reuses the installation id. Moving it to the current
-      // workspace is what someone reconnecting expects, and it keeps the
-      // uniqueness constraint from turning a normal action into an error.
       .onConflictDoUpdate({
         target: githubInstallations.installationId,
         set: { workspaceId, accountLogin, connectedByUserId: session.user.id },
       });
 
-    settings.searchParams.set("connected", accountLogin);
-    return Response.redirect(settings, 302);
+    return redirectTo(request, locale, "/settings/github", { connected: accountLogin });
   } catch (error) {
     // The detail goes to the log; the page gets a code it can translate.
     console.error("[github] installation callback failed:", error);
-    settings.searchParams.set("error", "install-failed");
-    return Response.redirect(settings, 302);
+    return redirectTo(request, locale, "/settings/github", { error: "install-failed" });
   }
-}
-
-/** Which account the installation is on, from the token's own metadata. */
-async function installationAccountLogin(token: string): Promise<string> {
-  const response = await fetch("https://api.github.com/installation/repositories?per_page=1", {
-    headers: {
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "user-agent": "polymetis",
-      authorization: `Bearer ${token}`,
-    },
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!response.ok) return "unknown";
-
-  const payload = (await response.json()) as { repositories?: { owner?: { login?: unknown } }[] };
-  const login = payload.repositories?.[0]?.owner?.login;
-  // An installation with no repositories selected yet is legitimate; it simply
-  // has nothing to name itself after.
-  return typeof login === "string" ? login : "unknown";
 }
 
 export async function DELETE(request: NextRequest) {
@@ -119,4 +157,58 @@ export async function DELETE(request: NextRequest) {
   await db.delete(githubInstallations).where(eq(githubInstallations.id, row.id));
 
   return new Response(null, { status: 204 });
+}
+
+/**
+ * A redirect that cannot leave this site.
+ *
+ * `new URL("//attacker.example/x", origin)` resolves to attacker.example — a
+ * protocol-relative path in the first segment escapes the origin entirely. The
+ * locale is therefore taken from the signed state and checked against the
+ * configured set rather than interpolated from a query parameter.
+ */
+function redirectTo(
+  request: NextRequest,
+  locale: string,
+  path: string,
+  query: Record<string, string> = {},
+): Response {
+  const url = new URL(request.nextUrl.origin);
+  url.pathname = `/${safeLocale(locale)}${path}`;
+  for (const [key, value] of Object.entries(query)) {
+    url.searchParams.set(key, value);
+  }
+  return Response.redirect(url, 302);
+}
+
+function safeLocale(value: string): string {
+  return (routing.locales as readonly string[]).includes(value)
+    ? value
+    : routing.defaultLocale;
+}
+
+/** Which account the installation is on, from the token's own metadata. */
+async function installationAccountLogin(token: string): Promise<string> {
+  const response = await fetch(
+    "https://api.github.com/installation/repositories?per_page=1",
+    {
+      headers: {
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "polymetis",
+        authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+
+  if (!response.ok) return "unknown";
+
+  const payload = (await response.json()) as {
+    repositories?: { owner?: { login?: unknown } }[];
+  };
+  const login = payload.repositories?.[0]?.owner?.login;
+  // An installation with no repositories selected yet is legitimate; it simply
+  // has nothing to name itself after.
+  return typeof login === "string" ? login : "unknown";
 }

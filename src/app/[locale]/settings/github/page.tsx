@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { db } from "@/db";
 import { githubInstallations } from "@/db/schema";
 import { env, githubAppConfigured } from "@/env";
+import { signInstallState } from "@/lib/github/install-state";
 import type { Locale } from "@/i18n/routing";
 import { requireWorkspace } from "@/lib/workspaces/provision";
 
@@ -35,12 +36,7 @@ export default async function GithubSettingsPage({
     .where(eq(githubInstallations.workspaceId, workspaceId))
     .limit(1);
 
-  // GitHub appends installation_id to whatever callback URL the App declares;
-  // the locale rides along so the callback can send people back to the page
-  // they started from rather than always to English.
-  const installUrl = githubAppConfigured
-    ? `https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=${encodeURIComponent(locale)}`
-    : null;
+  const installUrl = buildInstallUrl(session.user.id, locale);
 
   return (
     <div className="mx-auto w-full max-w-xl px-4 py-8">
@@ -54,7 +50,7 @@ export default async function GithubSettingsPage({
       ) : null}
       {query.error ? (
         <p role="alert" className="text-destructive mt-4 text-sm">
-          {query.error === "missing-installation" ? t("errorMissing") : t("errorFailed")}
+          {t(ERROR_KEYS[query.error] ?? "errorFailed")}
         </p>
       ) : null}
 
@@ -97,3 +93,39 @@ export default async function GithubSettingsPage({
     </div>
   );
 }
+
+/**
+ * The App's install link, carrying a signed state bound to this session.
+ *
+ * The callback will not act on an installation without one, because everything
+ * else GitHub sends it is attacker-supplied. Built outside the component
+ * because it reads the clock, which a component body must not do — the same
+ * rule that catches time-dependent rendering before it becomes a hydration
+ * mismatch.
+ */
+function buildInstallUrl(userId: string, locale: Locale): string | null {
+  if (!githubAppConfigured) return null;
+
+  const state = signInstallState(
+    { userId, locale },
+    env.BETTER_AUTH_SECRET,
+    Date.now(),
+  );
+  return `https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=${encodeURIComponent(state)}`;
+}
+
+/**
+ * Callback failure codes, mapped to what a person can do about them.
+ *
+ * Anything unrecognised falls back to the generic message rather than being
+ * rendered raw — a query parameter is attacker-controlled text.
+ */
+const ERROR_KEYS: Record<string, string> = {
+  "missing-installation": "errorMissing",
+  "no-state": "errorNoState",
+  "wrong-user": "errorWrongUser",
+  "no-code": "errorNoCode",
+  "not-yours": "errorNotYours",
+  "already-claimed": "errorAlreadyClaimed",
+  "install-failed": "errorFailed",
+};

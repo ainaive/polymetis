@@ -76,6 +76,11 @@
     "connectedHint": "运行可以读取你所选择的仓库。",
     "errorMissing": "GitHub 未返回安装信息，请从 App 页面重试。",
     "errorFailed": "无法确认该安装，请重新连接。",
+    "errorNoState": "请从本页面发起连接，以便我们验证身份。",
+    "errorWrongUser": "该安装由另一个账户发起。",
+    "errorNoCode": "GitHub 未授权此次连接。请在 App 上启用用户授权后重试。",
+    "errorNotYours": "你在 GitHub 上无权访问该安装。",
+    "errorAlreadyClaimed": "该安装已连接到其他工作区，请先在那里断开连接。",
     "scopeNote": "Polymetis 仅申请仓库内容的读取权限，绝不会写入你的仓库；也不会存储仓库令牌——仅在运行需要时申请，并会在一小时内过期。"
   },
   "home": {

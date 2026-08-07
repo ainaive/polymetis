@@ -76,6 +76,11 @@
     "connectedHint": "Runs can read the repositories you selected.",
     "errorMissing": "GitHub did not send an installation. Try again from the App page.",
     "errorFailed": "That installation could not be confirmed. Try connecting again.",
+    "errorNoState": "Start the connection from this page so we can verify it is you.",
+    "errorWrongUser": "That installation was started by a different account.",
+    "errorNoCode": "GitHub did not authorize the connection. Enable user authorization on the App, then try again.",
+    "errorNotYours": "You do not have access to that installation on GitHub.",
+    "errorAlreadyClaimed": "That installation is already connected to another workspace. Disconnect it there first.",
     "scopeNote": "Polymetis asks for read access to repository contents only. It never writes to your repositories, and no repository token is stored — one is requested when a run needs it and expires within the hour."
   },
   "home": {

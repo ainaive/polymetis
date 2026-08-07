@@ -203,3 +203,76 @@ export class InstallationTokens {
     return minted.token;
   }
 }
+
+/**
+ * Exchange the OAuth code GitHub sends during installation for a user token.
+ *
+ * Requires "Request user authorization (OAuth) during installation" on the App.
+ * Without it the callback has no way to tell whose installation it is looking
+ * at, which is the difference between connecting an account and taking one over.
+ */
+export async function exchangeUserCode(
+  clientId: string,
+  clientSecret: string,
+  code: string,
+  options: { baseUrl?: string } = {},
+): Promise<string> {
+  const baseUrl = options.baseUrl ?? "https://github.com";
+
+  const response = await fetch(`${baseUrl}/login/oauth/access_token`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "user-agent": "polymetis",
+    },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub refused the authorization code (${response.status})`);
+  }
+
+  const payload = (await response.json()) as { access_token?: unknown; error?: unknown };
+  if (typeof payload.access_token !== "string") {
+    throw new Error(
+      `GitHub returned no access token${typeof payload.error === "string" ? `: ${payload.error}` : ""}`,
+    );
+  }
+
+  return payload.access_token;
+}
+
+/**
+ * Whether this *user* can administer this installation.
+ *
+ * The check the callback actually needs. Minting an installation token proves
+ * only that the installation exists and our App is on it — it succeeds for
+ * every installation of the App, including other people's. `/user/installations`
+ * is scoped to the token's own user, so it answers the question that matters.
+ */
+export async function userCanAccessInstallation(
+  userToken: string,
+  installationId: string,
+  options: { baseUrl?: string } = {},
+): Promise<boolean> {
+  const baseUrl = options.baseUrl ?? GITHUB_API;
+
+  const response = await fetch(`${baseUrl}/user/installations?per_page=100`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "polymetis",
+      authorization: `Bearer ${userToken}`,
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) return false;
+
+  const payload = (await response.json()) as { installations?: { id?: unknown }[] };
+  if (!Array.isArray(payload.installations)) return false;
+
+  return payload.installations.some((entry) => String(entry?.id) === installationId);
+}

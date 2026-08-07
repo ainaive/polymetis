@@ -37,6 +37,14 @@ const schema = z.object({
   GITHUB_APP_SLUG: z.string().optional(),
   /** PEM from the App's settings. Escaped newlines are normalized on use. */
   GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  /**
+   * The App's OAuth client, used during installation to prove the person
+   * connecting can administer the installation they named. Without it the
+   * callback cannot tell connecting an account from taking one over, so the App
+   * counts as unconfigured rather than partly working.
+   */
+  GITHUB_APP_CLIENT_ID: z.string().optional(),
+  GITHUB_APP_CLIENT_SECRET: z.string().optional(),
 
   // Agent runtime (M2). Absent means runs cannot be executed; the gallery and
   // replay of already-recorded runs still work, because replay reads our own
@@ -152,7 +160,11 @@ export const githubConfigured = Boolean(
  * key rather than being absent from the UI in the first place.
  */
 export const githubAppConfigured = Boolean(
-  parsed.GITHUB_APP_ID && parsed.GITHUB_APP_SLUG && parsed.GITHUB_APP_PRIVATE_KEY,
+  parsed.GITHUB_APP_ID &&
+    parsed.GITHUB_APP_SLUG &&
+    parsed.GITHUB_APP_PRIVATE_KEY &&
+    parsed.GITHUB_APP_CLIENT_ID &&
+    parsed.GITHUB_APP_CLIENT_SECRET,
 );
 
 /**
@@ -161,12 +173,20 @@ export const githubAppConfigured = Boolean(
  * Throwing here rather than returning undefined means a code path that needs
  * the App cannot quietly continue without it.
  */
-export function requireGithubApp(): { appId: string; privateKey: string; slug: string } {
+export function requireGithubApp(): {
+  appId: string;
+  privateKey: string;
+  slug: string;
+  clientId: string;
+  clientSecret: string;
+} {
   const missing = (
     [
       ["GITHUB_APP_ID", parsed.GITHUB_APP_ID],
       ["GITHUB_APP_SLUG", parsed.GITHUB_APP_SLUG],
       ["GITHUB_APP_PRIVATE_KEY", parsed.GITHUB_APP_PRIVATE_KEY],
+      ["GITHUB_APP_CLIENT_ID", parsed.GITHUB_APP_CLIENT_ID],
+      ["GITHUB_APP_CLIENT_SECRET", parsed.GITHUB_APP_CLIENT_SECRET],
     ] as const
   )
     .filter(([, value]) => !value)
@@ -174,7 +194,7 @@ export function requireGithubApp(): { appId: string; privateKey: string; slug: s
 
   if (missing.length > 0) {
     throw new Error(
-      `GitHub App is not configured: set ${missing.join(", ")}. Register an App with contents:read and metadata:read, then copy its id, slug and private key.`,
+      `GitHub App is not configured: set ${missing.join(", ")}. Register an App with contents:read and metadata:read, enable "Request user authorization (OAuth) during installation", then copy its id, slug, private key and OAuth client credentials.`,
     );
   }
 
@@ -182,5 +202,7 @@ export function requireGithubApp(): { appId: string; privateKey: string; slug: s
     appId: parsed.GITHUB_APP_ID!,
     slug: parsed.GITHUB_APP_SLUG!,
     privateKey: parsed.GITHUB_APP_PRIVATE_KEY!,
+    clientId: parsed.GITHUB_APP_CLIENT_ID!,
+    clientSecret: parsed.GITHUB_APP_CLIENT_SECRET!,
   };
 }
