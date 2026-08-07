@@ -24,7 +24,15 @@
 import { eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { runQueue, runs, templateVersions, templates, workspaces } from "@/db/schema";
+import {
+  runEvents,
+  runQueue,
+  runs,
+  templateVersions,
+  templates,
+  workspaces,
+} from "@/db/schema";
+import { appendEvents } from "@/lib/events/store";
 import { newId } from "@/lib/ids";
 import {
   claimNext,
@@ -51,7 +59,7 @@ function check(name: string, condition: boolean, detail = "") {
 const workspaceId = newId("ws");
 const templateId = newId("tpl");
 const versionId = newId("tplv");
-const runIds = [newId("run"), newId("run"), newId("run")];
+const runIds = [newId("run"), newId("run"), newId("run"), newId("run")];
 
 async function setup() {
   await db.insert(workspaces).values({
@@ -273,6 +281,55 @@ async function main() {
     "an abandoned run says so on the run row",
     failed?.status === "failed" && (failed.error ?? "").includes("abandoned"),
     `status ${failed?.status}, error ${failed?.error}`,
+  );
+
+  // --- a run whose log has begun is failed, not requeued --------------------
+  // The dead worker's run.start is durable, and the appender resumes at
+  // max(seq): requeueing would put a second run.start in the same append-only
+  // log (issue #10). The reaper must settle it instead.
+  await enqueue(runIds[3]!);
+  const begun = await claimNext(db, "worker-g");
+  check("claimed the run that will begin execution", begun?.runId === runIds[3]);
+  await appendEvents(db, runIds[3]!, 0, [
+    {
+      type: "run.start",
+      payload: { templateSlug: "verify", templateVersion: 1, inputs: {} },
+    },
+  ]);
+  await staleHeartbeat(runIds[3]!, 300);
+  const reapedBegun = await reapStale(db, 45);
+  check(
+    "a stale claim with a begun log is not requeued",
+    reapedBegun.length === 1 &&
+      reapedBegun[0]!.runId === runIds[3] &&
+      reapedBegun[0]!.requeued === false,
+    JSON.stringify(reapedBegun),
+  );
+
+  const [diedQueue] = await db
+    .select({ state: runQueue.state })
+    .from(runQueue)
+    .where(eq(runQueue.runId, runIds[3]!));
+  const [diedRun] = await db
+    .select({ status: runs.status, error: runs.error })
+    .from(runs)
+    .where(eq(runs.id, runIds[3]!));
+  check(
+    "a begun run is settled failed on both rows",
+    diedQueue?.state === "failed" &&
+      diedRun?.status === "failed" &&
+      (diedRun.error ?? "").includes("died"),
+    `queue ${diedQueue?.state}, run ${diedRun?.status}, error ${diedRun?.error}`,
+  );
+
+  const startEvents = await db
+    .select({ seq: runEvents.seq })
+    .from(runEvents)
+    .where(eq(runEvents.runId, runIds[3]!));
+  check(
+    "the log still holds exactly one run.start",
+    startEvents.length === 1,
+    `${startEvents.length} events`,
   );
 
   // --- a shutting-down worker gives its claim back --------------------------

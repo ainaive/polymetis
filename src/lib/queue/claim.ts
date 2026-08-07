@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Db, DbClient } from "@/db";
-import { runQueue, runs } from "@/db/schema";
+import { runEvents, runQueue, runs } from "@/db/schema";
 
 /**
  * Claiming, heartbeating and reaping queued runs.
@@ -135,10 +135,16 @@ export type ReapedRun = { runId: string; requeued: boolean };
 /**
  * Take back claims whose heartbeat stopped.
  *
- * Requeued unless the run has already been handed out MAX_ATTEMPTS times: a run
- * that reliably kills its worker would otherwise cycle forever, taking every
- * worker with it. Past the cap it is failed, which is a wrong-looking answer
- * that a human can see, rather than an invisible loop.
+ * Requeued only when the run's event log is still empty and it has not been
+ * handed out MAX_ATTEMPTS times. A run whose log has begun — the dead worker
+ * appended run.start — is failed instead: the appender resumes at max(seq), so
+ * a second attempt would write a second run.start into the same append-only
+ * log, and replay would fold both attempts into one timeline (ADR-0001 wants a
+ * fresh seq range per attempt, which is a schema change this predates). The
+ * attempt cap exists for the runs that die *before* execution: one that
+ * reliably kills its worker would otherwise cycle forever, taking every worker
+ * with it. Past the cap it is failed, which is a wrong-looking answer that a
+ * human can see, rather than an invisible loop.
  */
 export async function reapStale(
   db: Db,
@@ -162,8 +168,34 @@ export async function reapStale(
 
     if (stale.length === 0) return [];
 
-    const requeue = stale.filter((r) => r.attempts < MAX_ATTEMPTS).map((r) => r.runId);
-    const giveUp = stale.filter((r) => r.attempts >= MAX_ATTEMPTS).map((r) => r.runId);
+    // Any event at all means run.start is durable — it is always the first
+    // append — so the log has begun and this run must not be handed out again.
+    //
+    // A snapshot, not a fence: appendEvents does not verify the claim, so a
+    // worker that is stalled rather than dead can still append its first event
+    // after this reads empty and the run is requeued. That residual is the
+    // same one the give-up branch accepts below, and closing it needs appends
+    // fenced on lockedBy or the per-attempt seq range — the ADR-0001 change
+    // the doc comment names.
+    const begunRows = await tx
+      .select({ runId: runEvents.runId })
+      .from(runEvents)
+      .where(
+        inArray(
+          runEvents.runId,
+          stale.map((r) => r.runId),
+        ),
+      )
+      .groupBy(runEvents.runId);
+    const begun = new Set(begunRows.map((r) => r.runId));
+
+    const requeue = stale
+      .filter((r) => !begun.has(r.runId) && r.attempts < MAX_ATTEMPTS)
+      .map((r) => r.runId);
+    const giveUp = stale
+      .filter((r) => !begun.has(r.runId) && r.attempts >= MAX_ATTEMPTS)
+      .map((r) => r.runId);
+    const died = stale.filter((r) => begun.has(r.runId)).map((r) => r.runId);
 
     if (requeue.length > 0) {
       await tx
@@ -176,14 +208,18 @@ export async function reapStale(
         .where(inArray(runs.id, requeue));
     }
 
-    if (giveUp.length > 0) {
+    if (giveUp.length > 0 || died.length > 0) {
       await tx
         .update(runQueue)
         .set({ state: "failed", lockedBy: null, lockedAt: null })
-        .where(inArray(runQueue.runId, giveUp));
-      // No run.end is appended here. The log belongs to whatever was driving
-      // the run, and that process is gone; inventing a terminal event on its
-      // behalf would put a second one in an append-only log if it ever wakes up.
+        .where(inArray(runQueue.runId, [...giveUp, ...died]));
+    }
+
+    // No run.end is appended on either failure path. The log belongs to
+    // whatever was driving the run, and that process is gone; inventing a
+    // terminal event on its behalf would put a second one in an append-only
+    // log if it ever wakes up.
+    if (giveUp.length > 0) {
       await tx
         .update(runs)
         .set({
@@ -194,9 +230,21 @@ export async function reapStale(
         .where(inArray(runs.id, giveUp));
     }
 
+    if (died.length > 0) {
+      await tx
+        .update(runs)
+        .set({
+          status: "failed",
+          endedAt: sql`now()`,
+          error: "worker died after execution began",
+        })
+        .where(inArray(runs.id, died));
+    }
+
     return [
       ...requeue.map((runId) => ({ runId, requeued: true })),
       ...giveUp.map((runId) => ({ runId, requeued: false })),
+      ...died.map((runId) => ({ runId, requeued: false })),
     ];
   });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Pause, Play, RotateCcw } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +56,11 @@ export function ReplayPlayer({
 }) {
   const timeline = useMemo(() => buildTimeline(events), [events]);
   const { frames, steps, durationMs } = timeline;
+
+  // Localized like every other string on this page — the chips printed the raw
+  // event type, which is English in every locale. Catalog keys cannot contain
+  // dots, so the type maps onto an underscored key.
+  const tEventType = useTranslations("replay.eventType");
 
   const [elapsedMs, setElapsedMs] = useState(durationMs);
   const [playing, setPlaying] = useState(false);
@@ -186,13 +192,13 @@ export function ReplayPlayer({
                 onClick={() => toggleType(type)}
                 aria-pressed={!hidden.has(type)}
                 className={cn(
-                  "rounded-full border px-2 py-0.5 font-mono text-[11px] transition-colors",
+                  "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
                   hidden.has(type)
                     ? "text-muted-foreground/50 border-dashed"
                     : "bg-secondary text-secondary-foreground",
                 )}
               >
-                {type}
+                {tEventType(type.replace(".", "_"))}
               </button>
             ))}
           </div>

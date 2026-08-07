@@ -212,6 +212,13 @@ describe("hosts a run may not reach", () => {
     "https://172.16.0.9/repo.git",
     "https://[::1]/repo.git",
     "https://[fe80::1]/repo.git",
+    // IPv4-mapped IPv6 names the same endpoint as the embedded v4 address;
+    // the URL parser renders it in hex before the guard sees it.
+    "https://[::ffff:127.0.0.1]/repo.git",
+    "https://[::ffff:169.254.169.254]/repo.git",
+    // A trailing dot is the same name to the resolver.
+    "https://localhost./repo.git",
+    "https://metadata.google.internal./computeMetadata/v1/",
   ];
 
   for (const url of rejected) {
@@ -230,6 +237,10 @@ describe("hosts a run may not reach", () => {
     // 172.32 is outside 172.16/12, and 169.253 is not link-local.
     expect(classifyRepoSource("https://172.32.0.1/r.git").kind).toBe("clone");
     expect(classifyRepoSource("https://169.253.0.1/r.git").kind).toBe("clone");
+    // A mapped *public* address is judged as that address, not refused outright.
+    expect(classifyRepoSource("https://[::ffff:140.82.112.3]/r.git").kind).toBe(
+      "clone",
+    );
   });
 });
 

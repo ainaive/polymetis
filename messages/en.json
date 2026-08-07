@@ -118,6 +118,15 @@
     "liveWaiting": "Waiting for a worker to pick this up…",
     "liveReconnecting": "Reconnecting…",
     "replayFromStart": "Replay from the start",
+    "usageLine": "{tokens} tokens · ${cost} · {seconds}s",
+    "eventType": {
+      "step_start": "Steps",
+      "agent_message": "Messages",
+      "tool_call": "Tool calls",
+      "tool_result": "Tool results",
+      "artifact_write": "Writes",
+      "usage": "Usage"
+    },
     "event": {
       "runStart": "Started <code>{template}</code>",
       "runStartOn": "Started <code>{template}</code> on <code>{target}</code>",

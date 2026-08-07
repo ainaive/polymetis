@@ -2,6 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import { getFormatter, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 
 import { RunStatusBadge } from "@/components/dashboard/run-status-badge";
 import { LiveRun } from "@/components/replay/live-run";
@@ -15,12 +16,20 @@ import type { Locale } from "@/i18n/routing";
 
 type Props = { params: Promise<{ locale: Locale; runId: string }> };
 
+// generateMetadata and the page body both need the replay, and getReplay reads
+// the run's entire event log — uncached, every request materialized it twice.
+// The wrapper lives here rather than beside getReplay because src/db is kept
+// react-free by the import boundary.
+const loadReplay = cache(async (runId: string, locale: Locale) =>
+  getReplay(runId, locale, await currentViewer()),
+);
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { locale, runId } = await params;
   // The same viewer check: a page title is content, and returning one for a run
   // the reader cannot open would leak the template and repository through a
   // link preview.
-  const replay = await getReplay(runId, locale, await currentViewer());
+  const replay = await loadReplay(runId, locale);
   if (!replay) return {};
   return {
     title: `${replay.template.title} — Polymetis`,
@@ -32,7 +41,7 @@ export default async function ReplayPage({ params }: Props) {
   const { locale, runId } = await params;
   setRequestLocale(locale);
 
-  const replay = await getReplay(runId, locale, await currentViewer());
+  const replay = await loadReplay(runId, locale);
   if (!replay) notFound();
 
   const t = await getTranslations("replay");
@@ -81,14 +90,16 @@ export default async function ReplayPage({ params }: Props) {
               be shared. */}
           <RunStatusBadge status={replay.run.status} />
           <span className="text-muted-foreground font-mono text-xs tabular-nums">
-            {format.number(
-              replay.run.inputTokens +
-                replay.run.cacheReadTokens +
-                replay.run.cacheCreationTokens +
-                replay.run.outputTokens,
-            )}{" "}
-            {t("tokens")} · ${Number(replay.run.costUsd).toFixed(4)} ·{" "}
-            {Math.round(durationMs / 1000)}s
+            {t("usageLine", {
+              tokens: format.number(
+                replay.run.inputTokens +
+                  replay.run.cacheReadTokens +
+                  replay.run.cacheCreationTokens +
+                  replay.run.outputTokens,
+              ),
+              cost: Number(replay.run.costUsd).toFixed(4),
+              seconds: Math.round(durationMs / 1000),
+            })}
           </span>
         </div>
       </header>
