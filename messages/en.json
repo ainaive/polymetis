@@ -93,8 +93,8 @@
     "galleryHeading": "Curated runs",
     "galleryEmpty": "No demo runs yet. Run `bun run seed` to load the golden run fixture.",
     "events": "events",
-    "statRuns": "curated runs",
-    "statEvents": "recorded events",
+    "statRuns": "{count, plural, one {curated run} other {curated runs}}",
+    "statEvents": "{count, plural, one {recorded event} other {recorded events}}",
     "statTokens": "tokens spent"
   },
   "replay": {

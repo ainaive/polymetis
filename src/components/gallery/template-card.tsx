@@ -47,9 +47,26 @@ export function TemplateCard({
         what it produced, which is the thing being sold.
       */}
       {entry.preview ? (
-        <p className="bg-muted/40 text-muted-foreground line-clamp-4 rounded-md px-3 py-2.5 text-[13px] leading-relaxed text-pretty">
-          {entry.preview}
-        </p>
+        // Bounded by height and faded at the edge, not by line-clamp.
+        // line-clamp needs a -webkit-box display, the computed display here was
+        // flow-root whatever I set, and a half-cut fifth line kept bleeding out
+        // of the box. A max-height plus a gradient needs no vendor-prefixed
+        // display and degrades to "slightly short" rather than "visibly broken".
+        <div className="bg-muted/40 relative rounded-md px-3 py-2.5">
+          {/*
+            Height is an exact multiple of the line height, so the clip can only
+            land between lines. A round number like 6.5rem cuts partway through
+            the fifth one, which reads as broken rather than as truncated —
+            and the fade below only softens what is already a clean break.
+          */}
+          <p className="text-muted-foreground max-h-[84px] overflow-hidden text-[13px] leading-[21px]">
+            {entry.preview}
+          </p>
+          <span
+            className="from-muted/40 pointer-events-none absolute inset-x-0 bottom-0 h-5 rounded-b-md bg-gradient-to-t to-transparent"
+            aria-hidden
+          />
+        </div>
       ) : (
         <p className="text-muted-foreground text-sm text-pretty">{entry.summary}</p>
       )}

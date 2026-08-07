@@ -62,13 +62,13 @@ export default async function HomePage({
               <dt className="text-foreground font-mono font-medium tabular-nums">
                 {format.number(totals.runs)}
               </dt>
-              <dd>{t("statRuns")}</dd>
+              <dd>{t("statRuns", { count: totals.runs })}</dd>
             </div>
             <div className="flex items-baseline gap-1.5">
               <dt className="text-foreground font-mono font-medium tabular-nums">
                 {format.number(totals.events)}
               </dt>
-              <dd>{t("statEvents")}</dd>
+              <dd>{t("statEvents", { count: totals.events })}</dd>
             </div>
             <div className="flex items-baseline gap-1.5">
               <dt className="text-foreground font-mono font-medium tabular-nums">
