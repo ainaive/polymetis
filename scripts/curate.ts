@@ -69,6 +69,17 @@ async function list() {
       bytes: sql<string>`coalesce((
         select sum(a."bytes") from "runArtifacts" a where a."runId" = "runs"."id"
       ), 0)`,
+      // The same two facts promote() checks. Deriving them differently here —
+      // "bytes > 0" for the artifact, a hardcoded true for the terminal event —
+      // meant the listing could show a run as eligible that promote refuses, or
+      // flag one it would accept.
+      artifacts: sql<string>`(
+        select count(*) from "runArtifacts" a where a."runId" = "runs"."id"
+      )`,
+      terminal: sql<string>`(
+        select count(*) from "runEvents" e
+        where e."runId" = "runs"."id" and e."type" = 'run.end'
+      )`,
     })
     .from(runs)
     .where(eq(runs.status, "succeeded"))
@@ -87,8 +98,8 @@ async function list() {
       runId: row.id,
       status: row.status,
       repo: row.inputs.repo ?? null,
-      hasArtifact: Number(row.bytes) > 0,
-      hasTerminalEvent: true,
+      hasArtifact: Number(row.artifacts) > 0,
+      hasTerminalEvent: Number(row.terminal) > 0,
     });
     const note = decision.ok ? "" : `  ← ${decision.detail}`;
     console.log(

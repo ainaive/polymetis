@@ -8,11 +8,18 @@
  *
  *   DATABASE_URL=... bun run scripts/verify/queue-claim.ts
  *
- * It refuses to run against a queue that already has work in it. claimNext
- * takes whatever row is next — that is its job — so running this beside real
- * work does not merely fail an assertion: it claims someone else's run,
- * backdates its heartbeat, and reaps it until the attempt cap marks it failed.
- * It destroyed a queued demo run exactly that way before this guard existed.
+ * **Run this against a database nothing else is using.** claimNext takes
+ * whatever row is next — that is its job — so beside real work this does not
+ * merely fail an assertion: it claims someone else's run, backdates its
+ * heartbeat, and reaps it until the attempt cap marks it failed. It destroyed a
+ * queued demo run exactly that way.
+ *
+ * Two mitigations, and it is worth being clear about what each does. A session
+ * advisory lock stops two copies of this verification colliding. A preflight
+ * count refuses to start when the queue already holds work. Neither closes the
+ * window: a run enqueued *after* the count still gets claimed, because nothing
+ * outside this file takes that lock. An isolated database is the only real
+ * guarantee, which is what CI uses.
  */
 import { eq, inArray, sql } from "drizzle-orm";
 
@@ -26,6 +33,9 @@ import {
   reapStale,
   releaseClaim,
 } from "@/lib/queue/claim";
+
+/** Arbitrary but fixed, so two runs of this script serialize against each other. */
+const ADVISORY_LOCK_KEY = 8_421_337;
 
 let failures = 0;
 
@@ -98,8 +108,13 @@ async function staleHeartbeat(runId: string, secondsAgo: number) {
 }
 
 async function main() {
-  // Before anything: this operates on the real queue, and claimNext does not
-  // know which rows are ours.
+  // Serializes concurrent copies of this verification. Deliberately not taken
+  // by the worker or by enqueue: making production code acquire a lock for a
+  // test's benefit is a worse trade than an isolated database.
+  await db.execute(sql`select pg_advisory_lock(${ADVISORY_LOCK_KEY})`);
+
+  // A moment-in-time check, not a barrier. Anything enqueued after it is still
+  // fair game for claimNext below — see the note at the top of this file.
   const [busy] = await db
     .select({ count: sql<string>`count(*)` })
     .from(runQueue)

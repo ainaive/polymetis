@@ -147,7 +147,17 @@ export async function listGallery(
       template: templates,
       title: templateI18n.title,
       summary: templateI18n.summary,
-      artifact: runArtifacts.content,
+      // A correlated subquery, not a join. runArtifacts is unique on
+      // (runId, path), so a run may hold several — and a join would then emit
+      // one card per artifact, duplicating entries, inflating the hero totals,
+      // and pushing later runs out past the limit. Which one is not arbitrary
+      // either: it is the file the template version contracted for.
+      artifact: sql<string | null>`(
+        select a."content" from "runArtifacts" a
+        where a."runId" = "runs"."id"
+          and a."path" = "templateVersions"."deliverable"->>'filename'
+        limit 1
+      )`,
       // Counted in SQL rather than by reading the log. Loading every event of
       // every card to call .length on it costs hundreds of rows per run for a
       // number the database already knows.
@@ -169,7 +179,6 @@ export async function listGallery(
         eq(templateI18n.locale, locale),
       ),
     )
-    .leftJoin(runArtifacts, eq(runArtifacts.runId, runs.id))
     .where(and(eq(runs.visibility, "public"), eq(runs.isDemo, true)))
     .orderBy(desc(runs.queuedAt))
     .limit(limit);

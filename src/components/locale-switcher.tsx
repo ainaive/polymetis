@@ -3,6 +3,8 @@
 import { Languages } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useSearchParams } from "next/navigation";
+
 import { usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
@@ -29,6 +31,10 @@ export function LocaleSwitcher({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  // usePathname gives the path without the locale prefix and without the
+  // query. Pushing it alone drops the parameters — switching language on
+  // /runs/new?template=issue-to-spec would silently deselect the template.
+  const search = useSearchParams().toString();
 
   return (
     <div className="flex items-center" role="group" aria-label={labels.switch}>
@@ -47,7 +53,7 @@ export function LocaleSwitcher({
           )}
           onClick={() => {
             if (locale === current) return;
-            router.push(pathname, { locale });
+            router.push(search ? `${pathname}?${search}` : pathname, { locale });
           }}
         >
           {labels.names[locale] ?? locale}

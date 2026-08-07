@@ -7,7 +7,7 @@ decided it was worth showing.
 
 ## How a run gets there
 
-```
+```sh
 bun run enqueue <repo-url> <issue-url> --public   # queue it
 bun run worker                                    # run it
 bun run curate list                               # see candidates and refusals
@@ -52,5 +52,8 @@ says so. It became the wrong call the moment runs worked, because the homepage's
 claim is specifically that these are real. The fixture still exists and still
 drives the player's unit tests; what went is the pretence that it happened.
 
-Its own successor refuses it: `canCurate` rejects that run, because `honojs/hono`
-is not something a visitor could clone.
+Its own successor refuses it, though for a narrower reason than "it was fake":
+the fixture stored its repository as the shorthand `honojs/hono`, and
+`classifyRepoSource` only recognises an `https://` URL or an absolute path. The
+repository is perfectly cloneable — the recorded value simply is not a clone
+source, so nothing could reproduce the run from what the row says.
