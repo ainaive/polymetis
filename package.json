@@ -12,6 +12,7 @@
     "check": "bun run typecheck && bun run lint && bun test",
     "worker": "bun run src/worker/index.ts",
     "enqueue": "bun run scripts/enqueue.ts",
+    "curate": "bun run scripts/curate.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
