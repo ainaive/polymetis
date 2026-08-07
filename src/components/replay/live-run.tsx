@@ -13,6 +13,7 @@ import {
   type StoredEvent,
 } from "@/lib/events/fold";
 import { runEventTypes } from "@/lib/events/schema";
+import { STREAM_CLOSED_EVENT } from "@/lib/events/sse";
 import { cn } from "@/lib/utils";
 
 import { EventRow, formatElapsed } from "./event-row";
@@ -89,6 +90,16 @@ export function LiveRun({
     // nothing at all while the connection looks perfectly healthy.
     for (const type of runEventTypes) source.addEventListener(type, receive);
 
+    // The run finished without a run.end in its log — a failure before the
+    // agent started, or a run the reaper gave up on. The server has to say so,
+    // because a bare close is indistinguishable from a dropped connection and
+    // EventSource would reconnect against a run that will never speak again.
+    const streamClosed = () => {
+      setConnection("ended");
+      source.close();
+    };
+    source.addEventListener(STREAM_CLOSED_EVENT, streamClosed);
+
     source.onerror = () => {
       // EventSource reconnects on its own; this only reports it. The server
       // also closes the stream deliberately after run.end and at its duration
@@ -102,6 +113,7 @@ export function LiveRun({
 
     return () => {
       for (const type of runEventTypes) source.removeEventListener(type, receive);
+      source.removeEventListener(STREAM_CLOSED_EVENT, streamClosed);
       source.close();
     };
   }, [runId]);

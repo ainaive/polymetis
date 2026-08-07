@@ -44,6 +44,44 @@ export function sseComment(text: string): string {
 }
 
 /**
+ * How often a quiet stream re-checks whether the run has finished.
+ *
+ * Slower than `SSE_POLL_MS` on purpose: it is a second query per cycle, and the
+ * poll rate is already the cost of this endpoint. Only a stream with nothing
+ * new to send asks — while events are arriving the run is evidently alive.
+ */
+export const SSE_STATUS_POLL_MS = 5_000;
+
+/**
+ * Ends a stream for a run that finished without a `run.end` event in its log.
+ *
+ * A run reaches a terminal status with no terminal event more often than it
+ * sounds: `settleRun` writes one for any failure before the agent started
+ * (clone refused, private repo, missing template), and the reaper writes one
+ * for a run it gave up on. Neither appends `run.end`, deliberately — inventing
+ * a terminal event on a dead appender's behalf risks a second one in an
+ * append-only log.
+ *
+ * So the reader has to notice instead, and it has to say so out loud. A bare
+ * close is indistinguishable from a dropped connection, and EventSource would
+ * reconnect against a run that will never speak again.
+ *
+ * This frame carries no `id:`. The client's reconnect cursor must stay on the
+ * last real event; this one is not in the log and has no seq. Its name is
+ * deliberately outside `runEventTypes` so it can never be read as a run event.
+ */
+export const STREAM_CLOSED_EVENT = "stream.closed";
+
+export function sseStreamClosed(status: string): string {
+  return [
+    `event: ${STREAM_CLOSED_EVENT}`,
+    `data: ${JSON.stringify({ status })}`,
+    "",
+    "",
+  ].join("\n");
+}
+
+/**
  * Where to resume from.
  *
  * `Last-Event-ID` is what the browser's own EventSource sends on reconnect and

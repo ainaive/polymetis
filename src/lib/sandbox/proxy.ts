@@ -124,6 +124,41 @@ export function buildUpstreamHeaders(
   return headers;
 }
 
+/**
+ * Resolve the sandbox's request-target against the upstream base, refusing
+ * anything that would leave the upstream origin.
+ *
+ * `new URL(target, upstream)` treats the target as a *reference*, not a path,
+ * and the very next thing this proxy does is attach the real credential. An
+ * absolute-form request line (`GET http://elsewhere/x HTTP/1.1`, legal per
+ * RFC 7230 section 5.3.2 and surfaced verbatim as `req.url`) or a
+ * protocol-relative `//elsewhere/x` replaces the base outright, which turns the
+ * proxy into a credential relay to any host the container names — and into an
+ * SSRF pivot onto the worker's own network. The run-token check above cannot
+ * catch it: anything executing in the container legitimately holds that token
+ * and is using the credential path exactly as designed, only with a different
+ * destination.
+ *
+ * The origin comparison is not redundant with the prefix test. WHATWG URL
+ * treats `\` as `/` for special schemes, so `/\elsewhere/x` — which starts with
+ * a single slash — still resolves to `https://elsewhere/x`.
+ */
+export function resolveUpstreamUrl(
+  target: string | undefined,
+  upstream: string,
+): URL | null {
+  if (!target || !target.startsWith("/")) return null;
+
+  let resolved: URL;
+  try {
+    resolved = new URL(target, upstream);
+  } catch {
+    return null;
+  }
+
+  return resolved.origin === new URL(upstream).origin ? resolved : null;
+}
+
 export async function startCredentialProxy(
   config: CredentialProxyConfig,
 ): Promise<CredentialProxy> {
@@ -182,6 +217,22 @@ export async function startCredentialProxy(
         return;
       }
 
+      // Confine the target before reading a body or attaching a credential.
+      const target = resolveUpstreamUrl(req.url, upstream);
+      if (!target) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: "Request target must be a path on the upstream origin.",
+            },
+          }),
+        );
+        return;
+      }
+
       const body = await readBody(req);
 
       // An idle timer rather than a deadline: a legitimate streamed response
@@ -197,7 +248,7 @@ export async function startCredentialProxy(
       };
       resetIdle();
 
-      const response = await fetch(new URL(req.url ?? "/", upstream), {
+      const response = await fetch(target, {
         method: req.method,
         headers: buildUpstreamHeaders(req.headers, config.credential),
         // Buffer is a Uint8Array view; fetch accepts the view, not the Buffer type.

@@ -7,6 +7,21 @@
  * have spared, or leaving a log half-deleted.
  *
  *   DATABASE_URL=... bun run scripts/verify/retention.ts
+ *
+ * **Run this against a database nothing else is using.** It calls
+ * purgeExpiredRuns with dryRun:false, and that selects across the whole `runs`
+ * table rather than only the fixtures below — so pointed at a development
+ * database it permanently deletes the log and artifacts of every private run
+ * older than ninety days, in one transaction, with nothing to undo it. The
+ * check that exactly one run was purged then fails too, which means the
+ * destruction is discovered only after it happened.
+ *
+ * Two mitigations, and it is worth being clear about what each does. A session
+ * advisory lock stops two copies of this verification colliding. A preflight
+ * count refuses to start when the database holds any run this script did not
+ * create. Neither closes the window: a run created *after* the count is still
+ * inside the purge's reach, because nothing outside this file takes that lock.
+ * An isolated database is the only real guarantee, which is what CI uses.
  */
 import { eq, inArray, sql } from "drizzle-orm";
 
@@ -154,7 +169,31 @@ async function counts(runId: string) {
   };
 }
 
+/** Arbitrary but fixed, so two runs of this script serialize against each other. */
+const ADVISORY_LOCK_KEY = 8_421_338;
+
 async function main() {
+  await db.execute(sql`select pg_advisory_lock(${ADVISORY_LOCK_KEY})`);
+
+  // A moment-in-time check, not a barrier. Anything created after it is still
+  // inside the purge's reach — see the note at the top of this file.
+  const [existing] = await db.select({ count: sql<string>`count(*)` }).from(runs);
+
+  if (Number(existing?.count ?? 0) > 0) {
+    console.error(
+      `FAIL  the database holds ${existing?.count} run(s) — refusing to run.`,
+    );
+    console.error(
+      "      This verification purges for real, across the whole runs table,",
+    );
+    console.error(
+      "      and a whole-log deletion cannot be undone. Point DATABASE_URL at a",
+    );
+    console.error("      disposable database.");
+    failures++;
+    return;
+  }
+
   await setup();
 
   // --- the dry run must not write ------------------------------------------

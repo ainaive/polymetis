@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { envSchema } from "./env";
+import { assertProductionSafe, DEV_FALLBACK_SECRET, envSchema } from "./env";
 
 describe("envSchema", () => {
   test("boots from an empty environment so M1 can run on fixtures alone", () => {
@@ -45,5 +45,69 @@ describe("envSchema", () => {
 
   test("rejects a sandbox mode that is neither docker nor none", () => {
     expect(() => envSchema.parse({ SANDBOX_MODE: "vm" })).toThrow();
+  });
+});
+
+describe("assertProductionSafe", () => {
+  type Config = Parameters<typeof assertProductionSafe>[0];
+
+  const production: Config = {
+    NODE_ENV: "production",
+    BETTER_AUTH_SECRET: "x".repeat(32),
+    DATABASE_URL: "postgres://user:pw@db.internal:5432/polymetis",
+  };
+
+  const check =
+    (overrides: Partial<Config>, options = { isBuildPhase: false }) =>
+    () =>
+      assertProductionSafe({ ...production, ...overrides }, options);
+
+  test("accepts a fully configured production environment", () => {
+    expect(check({})).not.toThrow();
+  });
+
+  test("says nothing about development, whatever it holds", () => {
+    expect(
+      check({
+        NODE_ENV: "development",
+        BETTER_AUTH_SECRET: DEV_FALLBACK_SECRET,
+        DATABASE_URL: undefined,
+      }),
+    ).not.toThrow();
+  });
+
+  // The sandbox guard deliberately does NOT live here — see assertSandboxAllowed
+  // in src/lib/runner/execute.ts. A check at env load binds `next build` too,
+  // which would need a NEXT_PHASE exemption, and that exemption is exactly what
+  // a worker must not be able to inherit.
+  test("says nothing about the sandbox", () => {
+    expect(Object.keys(production)).not.toContain("SANDBOX_MODE");
+  });
+
+  test("refuses the dev fallback secret in production", () => {
+    expect(check({ BETTER_AUTH_SECRET: DEV_FALLBACK_SECRET })).toThrow(
+      /BETTER_AUTH_SECRET/,
+    );
+  });
+
+  test("refuses a secret shorter than better-auth's own minimum", () => {
+    expect(check({ BETTER_AUTH_SECRET: "x".repeat(31) })).toThrow(
+      /BETTER_AUTH_SECRET/,
+    );
+  });
+
+  test("refuses a missing database url in production", () => {
+    expect(check({ DATABASE_URL: undefined })).toThrow(/DATABASE_URL/);
+  });
+
+  // Build machines have no secrets and need none — that is the whole reason the
+  // exemption exists, and it stays.
+  test("allows missing credentials during the build phase", () => {
+    expect(
+      check(
+        { BETTER_AUTH_SECRET: undefined, DATABASE_URL: undefined },
+        { isBuildPhase: true },
+      ),
+    ).not.toThrow();
   });
 });

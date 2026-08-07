@@ -117,6 +117,14 @@ async function resolveIssue(input: string | undefined, token?: string): Promise<
 
 async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> {
   let workdir: PreparedWorkdir | null = null;
+  /**
+   * Whether anything may have appended to this run's log yet.
+   *
+   * Past this point a requeue could interleave a second attempt into an
+   * append-only log, so a failure has to be settled rather than handed back —
+   * including during shutdown, where handing back is otherwise the right move.
+   */
+  let executionStarted = false;
 
   // Prove we are still alive, and notice when the reaper decided we were not.
   const beat = setInterval(() => {
@@ -154,6 +162,7 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
 
     const issue = await resolveIssue(claim.inputs.issue, token);
 
+    executionStarted = true;
     const result = await executeRun(db, {
       runId: claim.runId,
       workdir: workdir.path,
@@ -185,11 +194,23 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
-    // A run stopped by shutdown is not a failed run — it is one this worker
-    // will not finish. Settling it here would record a terminal status for an
-    // attempt that shutdown() is about to hand back to the queue.
-    if (shuttingDown) {
-      log(`${claim.runId} stopped for shutdown: ${message}`);
+    // A run that failed before execution began, while shutting down, is not a
+    // failed run — it is one this worker will not finish, and its log is still
+    // empty. Leave the claim held for shutdown() to hand back.
+    //
+    // `executionStarted` is load-bearing, not belt and braces. This catch also
+    // covers executeRun and settleRun, both of which run after the driver has
+    // appended events, so on `shuttingDown` alone a settle that failed on a
+    // database blip would return here, keep its claim, and be requeued by
+    // shutdown() — handing the next worker a log that already ends in run.end.
+    // Past the flag the only safe outcome is a terminal one, even mid-shutdown.
+    //
+    // A run aborted mid-execution does not arrive here at all: the driver
+    // catches the abort, appends run.end{cancelled}, and returns normally, so
+    // it settles above. See the note in shutdown() for why that is currently
+    // the right outcome rather than a missed requeue.
+    if (shuttingDown && !executionStarted) {
+      log(`${claim.runId} stopped for shutdown before it began: ${message}`);
       return;
     }
 
@@ -221,7 +242,16 @@ async function runOne(claim: ClaimedRun, abort: AbortController): Promise<void> 
     });
   } finally {
     clearInterval(beat);
-    workdir?.release();
+    try {
+      workdir?.release();
+    } catch (error) {
+      // release() is an rmSync, and `force` suppresses only ENOENT — a mount
+      // still held open gives EBUSY. Letting that escape rejects this run's
+      // promise, which nothing is awaiting until shutdown, so Bun would kill
+      // the worker and abandon every other run it is driving. A leaked temp
+      // directory is the cheaper failure by a wide margin.
+      log(`${claim.runId} could not remove its workdir: ${error}`);
+    }
     inFlight.delete(claim.runId);
   }
 }
@@ -266,7 +296,14 @@ async function main() {
       // The controller is created here, not inside runOne, because shutdown
       // has to be able to abort a run this loop is no longer watching.
       const abort = new AbortController();
-      inFlight.set(claim.runId, { claim, abort, done: runOne(claim, abort) });
+      // The catch is a backstop, not decoration. Nothing awaits `done` until
+      // shutdown, which may be hours away, so any rejection escaping runOne is
+      // an unhandled rejection first and a shutdown concern second — and Bun
+      // terminates the process on one, taking every concurrent run with it.
+      const done = runOne(claim, abort).catch((error) => {
+        log(`${claim.runId} ended abnormally: ${error}`);
+      });
+      inFlight.set(claim.runId, { claim, abort, done });
     }
 
     if (!claimedAny) {
@@ -294,21 +331,52 @@ async function shutdown(signal: string) {
   // immediately, but the driver is still appending its terminal events; giving
   // the run back first lets another worker claim it while the previous attempt
   // is still writing, and both attempts then interleave in one append-only log.
+  //
+  // Which runs finished has to be tracked individually. The race resolves as
+  // soon as the grace expires, and it cannot say who was slow — releasing on
+  // that signal alone would requeue a run whose driver is still mid-append,
+  // which is the exact hazard this wait exists to prevent.
+  const unwound = new Set<string>();
   await Promise.race([
-    Promise.allSettled(entries.map((entry) => entry.done)),
+    Promise.all(
+      entries.map((entry) => entry.done.then(() => unwound.add(entry.claim.runId))),
+    ),
     sleep(SHUTDOWN_GRACE_MS),
   ]);
 
-  // Give the claims back rather than letting them time out. The worker knows it
-  // will not finish; making another worker wait three heartbeats to discover
-  // that is a pause with no information in it. releaseClaim is guarded on
-  // lockedBy, so a run that settled normally in the meantime is left alone.
+  const stillWriting = entries.filter((entry) => !unwound.has(entry.claim.runId));
+  if (stillWriting.length > 0) {
+    // Left claimed on purpose. The reaper takes them after three missed
+    // heartbeats, by which time this process is gone and nothing is appending.
+    log(
+      `${stillWriting.length} run(s) did not unwind within ${SHUTDOWN_GRACE_MS}ms — leaving their claims for the reaper`,
+    );
+  }
+
+  // Give back the claims that are still held rather than letting them time out.
+  // The worker knows it will not finish; making another worker wait three
+  // heartbeats to discover that is a pause with no information in it.
+  //
+  // In practice this reaches only runs that failed during setup (see runOne's
+  // catch). A run aborted mid-execution has already settled `cancelled`,
+  // because the driver appends run.end on abort, and releaseClaim is guarded on
+  // lockedBy — which that settle cleared.
+  //
+  // That is currently the outcome we want, not a gap to close. Requeueing such
+  // a run would hand the next worker a log that already ends in run.end, and
+  // the appender resumes at max(seq): attempt two would write run.start after a
+  // terminal event, in a log that cannot be repaired because it is append-only.
+  // A real requeue needs a fresh seq range per attempt, which is a schema and
+  // ADR-0001 change. Until then a run interrupted mid-flight is cancelled and
+  // has to be started again, which loses work but never the log's integrity.
   await Promise.all(
-    entries.map((entry) =>
-      releaseClaim(db, entry.claim.runId, workerId).catch((error) => {
-        log(`could not release ${entry.claim.runId}: ${error}`);
-      }),
-    ),
+    entries
+      .filter((entry) => unwound.has(entry.claim.runId))
+      .map((entry) =>
+        releaseClaim(db, entry.claim.runId, workerId).catch((error) => {
+          log(`could not release ${entry.claim.runId}: ${error}`);
+        }),
+      ),
   );
 
   log("done");

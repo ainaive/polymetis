@@ -99,7 +99,8 @@ const schema = z.object({
 /** Exported for tests: parse a controlled input instead of process.env. */
 export const envSchema = schema;
 
-const DEV_FALLBACK_SECRET = "dev-secret-change-me";
+/** Exported for tests: the value the production guard must refuse. */
+export const DEV_FALLBACK_SECRET = "dev-secret-change-me";
 const DEV_FALLBACK_DB = "postgres://polymetis:polymetis@localhost:5432/polymetis";
 
 export type Env = Omit<
@@ -110,14 +111,35 @@ export type Env = Omit<
   DATABASE_URL: string;
 };
 
-const parsed = schema.parse(process.env);
+/**
+ * Refuse to boot on a configuration that is only safe in development.
+ *
+ * Exported and pure so it can be tested. As an inline block at module scope it
+ * ran once at import and nothing could reach it.
+ *
+ * This covers the credential fallbacks only. `SANDBOX_MODE=none` is not checked
+ * here: every process that imports `env` would have to satisfy it, including
+ * `next build`, which evaluates server modules with NODE_ENV=production and no
+ * sandbox configured. Exempting the build means keying on `NEXT_PHASE` — a
+ * Next.js-owned variable a worker never sets deliberately — so a stale value in
+ * a shared env file or a base image would switch the guard off in the one
+ * process that matters.
+ *
+ * The sandbox refusal lives in `src/lib/runner/execute.ts` instead, at the only
+ * place the unsandboxed path is actually taken. Nothing reaches it that is not
+ * about to run an agent, so it needs no exemption and has none.
+ */
+export function assertProductionSafe(
+  parsed: Pick<z.infer<typeof schema>, "NODE_ENV" | "BETTER_AUTH_SECRET" | "DATABASE_URL">,
+  options: { isBuildPhase: boolean },
+): void {
+  if (parsed.NODE_ENV !== "production") return;
 
-// Production must not run on dev fallbacks: a guessable auth secret lets
-// anyone forge a session, and a defaulted DATABASE_URL points at nothing real.
-// Enforced at runtime, not during `next build` — build machines have no
-// secrets and need none.
-const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
-if (parsed.NODE_ENV === "production" && !isBuildPhase) {
+  // Production must not run on dev fallbacks: a guessable auth secret lets
+  // anyone forge a session, and a defaulted DATABASE_URL points at nothing real.
+  // Build machines have neither and need neither.
+  if (options.isBuildPhase) return;
+
   // 32 is better-auth's own minimum: below it, it logs a low-entropy warning
   // that is easy to miss in deploy logs. Fail the boot instead.
   if (
@@ -132,16 +154,13 @@ if (parsed.NODE_ENV === "production" && !isBuildPhase) {
   if (!parsed.DATABASE_URL) {
     throw new Error("DATABASE_URL must be set explicitly in production");
   }
-  // SANDBOX_MODE=none runs a model-driven agent over untrusted repository
-  // content directly on the host, with the worker's own filesystem and network.
-  // It exists so the driver can be developed before a container runtime is
-  // available (ADR-0003); in production it is the whole threat model deleted.
-  if (parsed.SANDBOX_MODE === "none") {
-    throw new Error(
-      "SANDBOX_MODE=none runs the agent unsandboxed on the host and must never be used in production — set SANDBOX_MODE=docker",
-    );
-  }
 }
+
+const parsed = schema.parse(process.env);
+
+assertProductionSafe(parsed, {
+  isBuildPhase: process.env.NEXT_PHASE === "phase-production-build",
+});
 
 export const env: Env = {
   ...parsed,

@@ -4,13 +4,16 @@ import type { NextRequest } from "next/server";
 import { currentViewer } from "@/auth/viewer";
 import { db } from "@/db";
 import { runs } from "@/db/schema";
+import { isTerminalRunStatus } from "@/lib/events/fold";
 import {
   parseCursor,
   SSE_KEEPALIVE_MS,
   SSE_MAX_DURATION_MS,
   SSE_POLL_MS,
+  SSE_STATUS_POLL_MS,
   sseComment,
   sseFrame,
+  sseStreamClosed,
 } from "@/lib/events/sse";
 import { readEvents } from "@/lib/events/store";
 import { canViewRun } from "@/lib/runs/access";
@@ -65,6 +68,11 @@ export async function GET(
       const startedAt = Date.now();
       let seq = cursor;
       let lastWrite = Date.now();
+      // Zero, not now: a run that was already terminal when this connection
+      // opened — a reconnect, or a run that settled between page render and
+      // stream open — should be recognised on the first quiet cycle rather
+      // than after a throttle interval of polling something that is over.
+      let lastStatusCheck = 0;
       let closed = false;
 
       const send = (chunk: string) => {
@@ -99,6 +107,28 @@ export async function GET(
             if (event.type === "run.end") {
               // The log is terminal. Close rather than poll forever for events
               // that by definition cannot arrive.
+              finish();
+              return;
+            }
+          }
+
+          // A run can be terminal with no run.end in its log — see
+          // sseStreamClosed. Without this the stream polls for the full
+          // duration cap while the page shows a live run that failed minutes
+          // ago, which is the ordinary outcome of a clone that was refused.
+          // Only asked on a quiet cycle, and no more often than the throttle:
+          // it is a second query against a pool every viewer shares.
+          if (events.length === 0 && Date.now() - lastStatusCheck > SSE_STATUS_POLL_MS) {
+            lastStatusCheck = Date.now();
+            const [current] = await db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, runId))
+              .limit(1);
+
+            // A row that has gone missing is not coming back either.
+            if (!current || isTerminalRunStatus(current.status)) {
+              send(sseStreamClosed(current?.status ?? "failed"));
               finish();
               return;
             }
@@ -150,6 +180,10 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     signal.addEventListener("abort", done, { once: true });
     function done() {
       clearTimeout(timer);
+      // `once` removes the listener only after it fires, and on the timer path
+      // it never does. Without this every poll leaves one behind on a signal
+      // that lives as long as the connection.
+      signal.removeEventListener("abort", done);
       resolve();
     }
   });

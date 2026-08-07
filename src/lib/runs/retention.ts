@@ -71,6 +71,27 @@ export async function purgeExpiredRuns(
     options.now.getTime() - options.retentionDays * 24 * 60 * 60 * 1000,
   );
 
+  /**
+   * What makes a run purgeable, as one expression used by both the scan and
+   * the re-check inside the transaction. Two hand-written copies of this would
+   * drift, and the direction that matters — the delete being broader than the
+   * scan — is unrecoverable.
+   */
+  const eligible = and(
+    eq(runs.visibility, "private"),
+    eq(runs.isDemo, false),
+    isNull(runs.purgedAt),
+    // Terminal only. A queued or running run still has an appender holding
+    // a seq counter: deleting its events would not stop the writes, and the
+    // next append would continue from 200 with no 1..199 — a log with a gap,
+    // which is precisely the state the complete-or-absent invariant exists
+    // to prevent. A stuck run is the reaper's problem, not retention's.
+    inArray(runs.status, ["succeeded", "failed", "cancelled", "timed_out"]),
+    // queuedAt, not endedAt: a run that never finished still occupies the
+    // same storage, and is if anything less worth keeping.
+    lt(runs.queuedAt, cutoff),
+  );
+
   const candidates = await db
     .select({
       runId: runs.id,
@@ -91,22 +112,7 @@ export async function purgeExpiredRuns(
       )`,
     })
     .from(runs)
-    .where(
-      and(
-        eq(runs.visibility, "private"),
-        eq(runs.isDemo, false),
-        isNull(runs.purgedAt),
-        // Terminal only. A queued or running run still has an appender holding
-        // a seq counter: deleting its events would not stop the writes, and the
-        // next append would continue from 200 with no 1..199 — a log with a gap,
-        // which is precisely the state the complete-or-absent invariant exists
-        // to prevent. A stuck run is the reaper's problem, not retention's.
-        inArray(runs.status, ["succeeded", "failed", "cancelled", "timed_out"]),
-        // queuedAt, not endedAt: a run that never finished still occupies the
-        // same storage, and is if anything less worth keeping.
-        lt(runs.queuedAt, cutoff),
-      ),
-    )
+    .where(eligible)
     .limit(options.limit ?? 500);
 
   // Fail closed on external content. Deleting the row first loses the storage
@@ -114,9 +120,9 @@ export async function purgeExpiredRuns(
   // while its bytes are still in a bucket is worse than not purging it. When
   // object storage lands, this is where its deletion goes — before the row.
   const withExternal = candidates.filter((row) => Number(row.external) > 0);
-  const eligible = candidates.filter((row) => Number(row.external) === 0);
+  const local = candidates.filter((row) => Number(row.external) === 0);
 
-  const purged: PurgeCandidate[] = eligible.map((row) => ({
+  const purged: PurgeCandidate[] = local.map((row) => ({
     runId: row.runId,
     visibility: row.visibility,
     isDemo: row.isDemo,
@@ -130,16 +136,59 @@ export async function purgeExpiredRuns(
 
   const ids = purged.map((row) => row.runId);
 
-  await db.transaction(async (tx) => {
+  const deleted = await db.transaction(async (tx) => {
+    // Re-check eligibility under a row lock before deleting anything. The scan
+    // above ran outside any transaction, and the change that matters can happen
+    // in between: a private run made public is a replay link someone may now
+    // have shared, and deleting its log on the strength of a stale read leaves
+    // a public URL permanently broken. That is the one outcome this whole
+    // predicate exists to prevent, so it is worth reading twice.
+    const confirmed = await tx
+      .select({ runId: runs.id })
+      .from(runs)
+      .where(
+        and(
+          inArray(runs.id, ids),
+          eligible,
+          // Re-checked here too: an artifact that gained a storage key since
+          // the scan would be orphaned in a bucket by the delete below.
+          //
+          // FOR UPDATE locks the rows this query returns — `runs` rows — and
+          // not the `runArtifacts` rows this subquery reads, so the artifact
+          // side is a read, not a reservation. Harmless while nothing writes
+          // storageKey, which nothing does. When object storage lands it will
+          // not be: lock the artifact rows too, or delete the objects before
+          // the rows, in the same place the comment above points at.
+          sql`not exists (
+            select 1 from "runArtifacts" a
+            where a."runId" = "runs"."id" and a."storageKey" is not null
+          )`,
+        ),
+      )
+      .for("update");
+
+    const stillEligible = confirmed.map((row) => row.runId);
+    if (stillEligible.length === 0) return [];
+
     // One transaction per batch: a log half-deleted is exactly the state
     // ADR-0001's invariant exists to prevent, and it is unrecoverable.
-    await tx.delete(runEvents).where(inArray(runEvents.runId, ids));
-    await tx.delete(runArtifacts).where(inArray(runArtifacts.runId, ids));
+    await tx.delete(runEvents).where(inArray(runEvents.runId, stillEligible));
+    await tx.delete(runArtifacts).where(inArray(runArtifacts.runId, stillEligible));
     await tx
       .update(runs)
       .set({ purgedAt: options.now })
-      .where(inArray(runs.id, ids));
+      .where(inArray(runs.id, stillEligible));
+
+    return stillEligible;
   });
 
-  return { purged, skipped, dryRun: false };
+  // Report what was actually removed, not what was proposed. A caller that
+  // logs this — scripts/retention.ts does — would otherwise claim to have
+  // purged a run the transaction deliberately spared.
+  const removed = new Set(deleted);
+  return {
+    purged: purged.filter((row) => removed.has(row.runId)),
+    skipped: [...skipped, ...ids.filter((id) => !removed.has(id))],
+    dryRun: false,
+  };
 }
