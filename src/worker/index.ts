@@ -347,7 +347,9 @@ async function shutdown(signal: string) {
   const stillWriting = entries.filter((entry) => !unwound.has(entry.claim.runId));
   if (stillWriting.length > 0) {
     // Left claimed on purpose. The reaper takes them after three missed
-    // heartbeats, by which time this process is gone and nothing is appending.
+    // heartbeats, by which time this process is gone and nothing is appending —
+    // and because their logs have begun, it settles them failed rather than
+    // handing them out again (see reapStale).
     log(
       `${stillWriting.length} run(s) did not unwind within ${SHUTDOWN_GRACE_MS}ms — leaving their claims for the reaper`,
     );
