@@ -52,9 +52,6 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   AGENT_MODEL: z.string().default("claude-opus-5"),
   AGENT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("xhigh"),
-  // Accounting ceiling, used for quota. The authoritative per-run cost comes
-  // from the SDK, so this is a budget rather than an enforcement point.
-  RUN_COST_CEILING_USD: z.coerce.number().positive().default(5),
   // The circuit breaker the egress proxy actually enforces. Tokens rather than
   // dollars on purpose: the proxy observes tokens exactly, whereas converting
   // to dollars would need a pricing table duplicated from the SDK and free to

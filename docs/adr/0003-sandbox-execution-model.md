@@ -63,9 +63,13 @@ its traffic passes through.
 
 It trips on **tokens**, not dollars. The proxy observes tokens exactly;
 converting them to dollars would require a pricing table duplicated from the
-SDK and free to drift out of step with it. `RUN_COST_CEILING_USD` remains the
-accounting budget and comes from the SDK's own `total_cost_usd`;
-`RUN_TOKEN_CEILING` is what the proxy enforces.
+SDK and free to drift out of step with it. `RUN_TOKEN_CEILING` is what the proxy
+enforces; the dollar figure on a settled run comes from the SDK's own
+`total_cost_usd` and is a record, not a limit.
+
+*(Amended in M5: this originally also described a `RUN_COST_CEILING_USD`
+"accounting budget". Nothing ever read it, so it was removed rather than left
+looking like a control.)*
 
 ### `SANDBOX_MODE=none` exists, and production refuses it
 
@@ -115,8 +119,9 @@ What this costs:
 
 **Credential in the container with a strict egress allowlist.** Simpler, and
 `api.anthropic.com` is the one host that must be reachable anyway. Rejected
-because it makes `RUN_COST_CEILING_USD` unenforceable — traffic the worker
-never sees cannot be metered or stopped — and because it would require amending
+because traffic the worker never sees can be neither metered nor stopped — the
+per-run token ceiling and the observed usage that settles an abandoned run both
+depend on the proxy seeing every request — and because it would require amending
 ADR-0002 to carve out an exception rather than upholding it.
 
 **Agent SDK on the host with tools proxied into the container.** Keeps the
