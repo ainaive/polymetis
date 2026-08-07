@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -219,6 +220,9 @@ export async function prepareWorkdir(options: {
   if (source.kind === "local") {
     // Never a temp copy, and never removed: this is the developer's own
     // checkout, and a settle step that deleted it would be unforgivable.
+    // Its permissions are equally not ours to rewrite — no
+    // openWorkdirToSandbox here, so docker mode over a local path relies on
+    // the checkout already being readable by the sandbox uid.
     if (!isDirectory(source.path)) {
       throw new Error(`repo path is not a directory: ${source.path}`);
     }
@@ -231,6 +235,27 @@ export async function prepareWorkdir(options: {
     timeoutMs: options.timeoutMs,
     token: options.token,
   });
+}
+
+/**
+ * Make a prepared workdir usable from inside the sandbox.
+ *
+ * The clone happens on the host as the worker's uid; the container runs as
+ * 65532 (docker/sandbox.Dockerfile), and a bind mount preserves host
+ * ownership — so without this the agent can neither read the checkout nor
+ * write its deliverable. The isolation verification caught exactly that on
+ * its first real Linux run: colima's VM file sharing had been papering over
+ * the mismatch on macOS. World bits rather than chown, because chown needs
+ * root; the tree sits under a 0700 parent, so nothing changes about which
+ * host users can reach it.
+ */
+export function openWorkdirToSandbox(dir: string): void {
+  const result = spawnSync("chmod", ["-R", "a+rwX", dir]);
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      `could not open the workdir to the sandbox user: ${result.error ?? `chmod exited ${result.status}`}`,
+    );
+  }
 }
 
 /**
@@ -254,6 +279,7 @@ export async function cloneInto(
       options.timeoutMs ?? 300_000,
       options.token,
     );
+    openWorkdirToSandbox(dest);
   } catch (error) {
     // A half-written clone is not something to leave in tmp for a human to
     // find; the run is going to fail either way.

@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -169,6 +170,23 @@ describe("prepareWorkdir", () => {
     expect(
       execFileSync("git", ["-C", origin, "rev-list", "--count", "HEAD"]).toString().trim(),
     ).toBe("2");
+  });
+
+  test("a clone is usable by the sandbox uid", async () => {
+    // The container runs as 65532, not the uid that cloned; a bind mount
+    // preserves host ownership, so the workdir must grant world access — the
+    // isolation verification failed on real Linux without this.
+    const origin = makeOrigin("polymetis-origin3-");
+    const root = mkdtempSync(join(tmpdir(), "polymetis-root3-"));
+
+    const prepared = await cloneInto(`file://${origin}`, { runId: "run_m", root });
+
+    // The mountpoint: traverse, read and write for everyone (a+rwX).
+    expect(statSync(prepared.path).mode & 0o007).toBe(0o007);
+    // Content: readable; X adds execute to directories, not plain files.
+    expect(statSync(join(prepared.path, "README.md")).mode & 0o006).toBe(0o006);
+
+    prepared.release();
   });
 
   test("release removes the clone", async () => {
