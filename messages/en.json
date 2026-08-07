@@ -124,7 +124,8 @@
       "artifactWrite": "Wrote <name>{target}</name> ({bytes} bytes)",
       "usage": "{tokens} tokens · ${cost}",
       "runEnd": "Finished <name>{status}</name> in {duration}"
-    }
+    },
+    "purged": "This run's detail was removed on {date}. The summary above is what remains."
   },
   "locale": {
     "switch": "Language",

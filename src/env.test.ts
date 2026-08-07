@@ -19,11 +19,9 @@ describe("envSchema", () => {
   test("coerces numeric pool and ceiling settings from strings", () => {
     const parsed = envSchema.parse({
       DB_POOL_MAX: "25",
-      RUN_COST_CEILING_USD: "1.5",
       RUN_TIMEOUT_SECONDS: "600",
     });
     expect(parsed.DB_POOL_MAX).toBe(25);
-    expect(parsed.RUN_COST_CEILING_USD).toBe(1.5);
     expect(parsed.RUN_TIMEOUT_SECONDS).toBe(600);
   });
 

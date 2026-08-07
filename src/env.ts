@@ -52,9 +52,6 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   AGENT_MODEL: z.string().default("claude-opus-5"),
   AGENT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("xhigh"),
-  // Accounting ceiling, used for quota. The authoritative per-run cost comes
-  // from the SDK, so this is a budget rather than an enforcement point.
-  RUN_COST_CEILING_USD: z.coerce.number().positive().default(5),
   // The circuit breaker the egress proxy actually enforces. Tokens rather than
   // dollars on purpose: the proxy observes tokens exactly, whereas converting
   // to dollars would need a pricing table duplicated from the SDK and free to
@@ -85,6 +82,14 @@ const schema = z.object({
   // is summed from settled runs, so it cannot see work still in flight; this is
   // what stops a workspace starting twenty at once and blowing past the month.
   WORKSPACE_MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(3),
+
+  /**
+   * How long a private run keeps its event log and artifacts.
+   *
+   * Demo, public and unlisted runs are never purged — the gallery and any link
+   * someone has shared must keep working. 0 disables retention entirely.
+   */
+  RETENTION_DAYS: z.coerce.number().int().nonnegative().default(90),
 
   WORKER_ID: z.string().optional(),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),

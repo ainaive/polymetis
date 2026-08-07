@@ -68,6 +68,15 @@ export const runs = pgTable(
     costUsd: numeric({ precision: 12, scale: 6 }).notNull().default("0"),
 
     error: text(),
+
+    /**
+     * When this run's event log and artifacts were removed by retention.
+     *
+     * The row stays: the dashboard still shows the run happened and what it
+     * cost, and quota history stays intact. Only the detail goes. Null means
+     * the log is present (ADR-0001, as amended in M5).
+     */
+    purgedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     index("runs_workspaceId_idx").on(t.workspaceId),

@@ -98,8 +98,8 @@ docs/adr/           decisions and their rationale
 | M2 | Sandbox, agent driver, credential proxy, first template | done |
 | M3a | Queue claim, worker loop, settle, live SSE, tail view | done |
 | M3b | Accounts, access control, dashboard, run form, quota, GitHub App | done |
-| M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | in progress |
-| M5 | Egress allowlist, cost ceilings, retention | |
+| M4 | Curated demo runs, homepage design pass, full EN/ZH sweep | done |
+| M5 | Sandbox verification, egress correction, retention | in progress |
 
 M2 was split because its second half — the worker and live SSE — is what makes a
 run startable at all, and M3's dashboard and quota are UI around an action that
@@ -129,6 +129,14 @@ short-lived installation token passed as an HTTP header through the environment
 by both the replay page and the SSE stream; private fails closed, and the CLI
 scripts create `unlisted` runs because an operator has no session to be a member
 of.
+
+**The sandbox has never run.** Every run so far, including all four gallery
+runs, used `SANDBOX_MODE=none` — the agent directly on the host. `src/env.ts`
+refuses that in production, so this is what stands between the project and a
+deployment. M5 made the design coherent (ADR-0005 corrects an egress claim in
+ADR-0003 that could not have worked) and wrote
+`scripts/verify/sandbox-isolation.ts`, which skips until a container runtime
+exists. Running it is tracked in issue #7.
 
 **M2 carries the product risk.** If issue + repo → spec does not produce
 something a senior engineer says saved them real time, no amount of gallery

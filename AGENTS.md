@@ -21,9 +21,16 @@ Read `docs/architecture.md` first; decisions and their rationale live in
   modules directly under Bun, so a framework import fails at worker startup
   rather than at build time. `@/auth/index` is deliberately allowed — it is
   framework-free and the worker needs it to decrypt a stored GitHub token.
-- **The run event log is append-only** (ADR-0001). Never update or delete a
-  `runEvents` row, and never renumber `seq`. Replay, SSE reconnect, cost
-  accounting, and future fork-at-step all read it as an immutable stream.
+- **The run event log is append-only** (ADR-0001). Never update a `runEvents`
+  row, never delete an individual one, and never renumber `seq`. Replay, SSE
+  reconnect, cost accounting, and future fork-at-step all read it as an
+  immutable stream. The invariant they depend on is *a log is complete or
+  absent*.
+  There is exactly one deletion, added in M5 and amended into ADR-0001:
+  retention removes a private run's log **whole**, in one transaction, once the
+  run is terminal and older than `RETENTION_DAYS`. `src/lib/runs/retention.ts`
+  is the only place allowed to do it; anything else deleting from `runEvents` is
+  a bug.
 - **Credentials never enter the sandbox** (ADR-0002, ADR-0003). The worker
   clones the repo on the host and bind-mounts the result; the Anthropic
   credential is injected by the egress proxy, so the container holds only a

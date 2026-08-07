@@ -19,6 +19,8 @@ export type ReplayData = {
     visibility: string;
     workspaceId: string | null;
     isDemo: boolean;
+    /** Set when retention removed this run's log; the row itself remains. */
+    purgedAt: Date | null;
     inputs: Record<string, string>;
     startedAt: Date | null;
     endedAt: Date | null;
@@ -94,6 +96,7 @@ export async function getReplay(
       visibility: row.run.visibility,
       workspaceId: row.run.workspaceId,
       isDemo: row.run.isDemo,
+      purgedAt: row.run.purgedAt,
       inputs: row.run.inputs,
       startedAt: row.run.startedAt,
       endedAt: row.run.endedAt,

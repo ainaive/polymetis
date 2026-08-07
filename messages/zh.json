@@ -124,7 +124,8 @@
       "artifactWrite": "已写入 <name>{target}</name>（{bytes} 字节）",
       "usage": "{tokens} tokens · ${cost}",
       "runEnd": "运行<name>{status}</name>，耗时 {duration}"
-    }
+    },
+    "purged": "该运行的详细记录已于 {date} 移除，上方摘要为保留内容。"
   },
   "locale": {
     "switch": "语言",

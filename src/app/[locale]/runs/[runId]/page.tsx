@@ -93,7 +93,17 @@ export default async function ReplayPage({ params }: Props) {
         </div>
       </header>
 
-      {live ? (
+      {replay.run.purgedAt ? (
+        // Said, not shown as an empty player. A replay with no events renders
+        // as a run that did nothing, which is a different and wrong claim.
+        <div className="border-border/60 rounded-lg border border-dashed px-6 py-16 text-center">
+          <p className="text-muted-foreground text-sm">
+            {t("purged", {
+              date: format.dateTime(replay.run.purgedAt, { dateStyle: "medium" }),
+            })}
+          </p>
+        </div>
+      ) : live ? (
         // A run that has not finished has no duration to scrub over, so it gets
         // a tail rather than the player. router.refresh() swaps in the player
         // once run.end arrives.
