@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, RefreshCw } from "lucide-react";
+import { useFormatter } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +50,10 @@ export function LiveRun({
   labels: LiveLabels;
 }) {
   const router = useRouter();
+  // The route locale, not the browser's. toLocaleString() with no argument
+  // reads navigator's default, so a /zh reader gets whatever grouping their
+  // browser happens to use — the same bug already fixed on the replay header.
+  const format = useFormatter();
   const [events, setEvents] = useState<StoredEvent[]>(initialEvents);
   const [connection, setConnection] = useState<Connection>("connecting");
 
@@ -140,9 +145,9 @@ export function LiveRun({
 
         {timeline.totals.outputTokens > 0 || totalInputTokens(timeline.totals) > 0 ? (
           <span className="text-muted-foreground font-mono tabular-nums">
-            {(
-              totalInputTokens(timeline.totals) + timeline.totals.outputTokens
-            ).toLocaleString()}{" "}
+            {format.number(
+              totalInputTokens(timeline.totals) + timeline.totals.outputTokens,
+            )}{" "}
             {labels.tokens}
           </span>
         ) : null}

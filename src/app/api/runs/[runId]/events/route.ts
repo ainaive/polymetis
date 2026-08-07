@@ -45,7 +45,9 @@ export async function GET(
   // of them enforcing early would only make the live view and the replay
   // disagree about who may read the same run.
   if (!run) {
-    return new Response("not found", { status: 404 });
+    // No body: EventSource reports the status, and any text here would be
+    // user-facing copy living outside the message catalogs.
+    return new Response(null, { status: 404 });
   }
 
   const cursor = parseCursor(
@@ -112,8 +114,12 @@ export async function GET(
           await sleep(SSE_POLL_MS, request.signal);
         }
       } catch (error) {
+        // Opaque on the wire, detailed in the log. A database error message
+        // reaches every reader of this endpoint, and replay URLs are meant to
+        // be shared.
+        console.error(`[sse] ${runId} stream failed:`, error);
         if (!closed) {
-          send(sseComment(`error: ${error instanceof Error ? error.message : error}`));
+          send(sseComment("stream-error"));
           finish();
         }
       }

@@ -87,3 +87,36 @@ describe("isTerminalRunStatus", () => {
     expect(isTerminalRunStatus("running")).toBe(false);
   });
 });
+
+describe("parseCursor rejects values that are only nearly numbers", () => {
+  test("a numeric prefix is not a cursor", () => {
+    // parseInt("12junk") is 12. Resuming from a cursor that is nearly right
+    // silently skips events; starting over only repeats them.
+    expect(parseCursor("12junk", null)).toBe(0);
+  });
+
+  test("a decimal is not a cursor", () => {
+    expect(parseCursor("1.5", null)).toBe(0);
+  });
+
+  test("a value past the safe integer range is not a cursor", () => {
+    // Number("9007199254740993") is 9007199254740992 — not what was sent.
+    expect(parseCursor("9007199254740993", null)).toBe(0);
+  });
+
+  test("whitespace and signs are not cursors", () => {
+    expect(parseCursor(" 12", null)).toBe(0);
+    expect(parseCursor("+12", null)).toBe(0);
+  });
+
+  test("a plain unsigned integer still is", () => {
+    expect(parseCursor("12", null)).toBe(12);
+    expect(parseCursor("0", null)).toBe(0);
+  });
+
+  test("a bad Last-Event-ID falls through to ?after rather than to zero", () => {
+    // Losing a usable cursor because the other one was junk would replay the
+    // whole run into a client that already rendered it.
+    expect(parseCursor("junk", "7")).toBe(7);
+  });
+});

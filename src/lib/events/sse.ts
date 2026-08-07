@@ -53,10 +53,14 @@ export function sseComment(text: string): string {
 export function parseCursor(lastEventId: string | null, after: string | null): number {
   for (const candidate of [lastEventId, after]) {
     if (candidate === null) continue;
-    const parsed = Number.parseInt(candidate, 10);
-    // Anything unparseable means start from the beginning rather than guess:
-    // resuming from the wrong place drops events with no sign that it happened.
-    if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+    // The whole string must be an unsigned integer. parseInt takes prefixes, so
+    // "12junk" resolves to 12 and "1.5" to 1 — a cursor that is nearly right is
+    // worse than none, because it resumes from the wrong place and drops events
+    // with no sign that it happened. Safe-integer bounded too: past 2^53 the
+    // parsed value is not the number that was sent.
+    if (!/^\d+$/.test(candidate)) continue;
+    const parsed = Number(candidate);
+    if (Number.isSafeInteger(parsed)) return parsed;
   }
   return 0;
 }
