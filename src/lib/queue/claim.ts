@@ -170,6 +170,13 @@ export async function reapStale(
 
     // Any event at all means run.start is durable — it is always the first
     // append — so the log has begun and this run must not be handed out again.
+    //
+    // A snapshot, not a fence: appendEvents does not verify the claim, so a
+    // worker that is stalled rather than dead can still append its first event
+    // after this reads empty and the run is requeued. That residual is the
+    // same one the give-up branch accepts below, and closing it needs appends
+    // fenced on lockedBy or the per-attempt seq range — the ADR-0001 change
+    // the doc comment names.
     const begunRows = await tx
       .select({ runId: runEvents.runId })
       .from(runEvents)
